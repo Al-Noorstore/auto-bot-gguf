@@ -997,13 +997,10 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) { appendTerm("\n(crash log read fail: " + e.message + ")\n") }
     }
 
-    // exact web UI: online → live site | offline → bundled copy (UI phir bhi poora dikhta hai)
+    // v3.1.2: UI hamesha bundled se (APK ke saath update hoti hai, website purani ho to bhi)
+    // server features (tasks/contacts/chat proxy) direct CORS ke through chalte hain
     private fun loadSite() {
-        if (isOnline()) webView.loadUrl(BASE)
-        else {
-            webView.loadUrl("file:///android_asset/index.html")
-            Toast.makeText(this, "Offline mode — UI chalu hai, server ke features online hone pe chalein ge", Toast.LENGTH_LONG).show()
-        }
+        webView.loadUrl("file:///android_asset/index.html")
     }
 
     private fun isOnline(): Boolean {
