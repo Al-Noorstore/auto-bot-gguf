@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Auto Bot</title>
+<link rel="icon" href="https://media.base44.com/images/public/6a98ccc4793eacdc89e1b50f/fa094e1e2_generated_image.png">
+<style>
+  :root {
+    --bg: #212121; --sidebar: #171717; --panel: #2f2f2f; --input: #303030;
+    --text: #ececec; --muted: #9b9b9b; --accent: #10a37f; --border: #ffffff1a;
+    --hov: #ffffff14; --hov-br: #ffffff33; --field: #404040;
+    --send-bg: #ffffff; --send-fg: #000000; --send-dis: #ffffff1f; --send-dis-fg: #8e8e8e;
+  }
+  body.light {
+    --bg: #ffffff; --sidebar: #f9f9f9; --panel: #f4f4f4; --input: #ffffff;
+    --text: #0d0d0d; --muted: #6b6b6b; --accent: #10a37f; --border: #0000001f;
+    --hov: #0000000d; --hov-br: #00000026; --field: #f4f4f4;
+    --send-bg: #0d0d0d; --send-fg: #ffffff; --send-dis: #00000014; --send-dis-fg: #9b9b9b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); display: flex; overflow: hidden; }
+
+  /* ---------- SIDEBAR ---------- */
+  #sidebar { width: 260px; background: var(--sidebar); display: flex; flex-direction: column; height: 100%; transition: transform .25s ease; z-index: 50; flex-shrink: 0; }
+  .side-top { padding: 10px; display: flex; align-items: center; gap: 10px; }
+  .hamb { background: none; border: none; color: var(--text); font-size: 20px; cursor: pointer; padding: 8px 10px; border-radius: 8px; }
+  .hamb:hover { background: var(--hov); }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+  .brand img { width: 28px; height: 28px; border-radius: 8px; }
+  #newchat { margin: 8px 10px; padding: 10px 14px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 24px; font-size: 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  #newchat:hover { background: var(--hov); }
+  nav { flex: 1; overflow-y: auto; padding: 6px 8px; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; cursor: pointer; color: var(--text); font-size: 14px; margin-bottom: 2px; border: none; background: none; width: 100%; text-align: left; }
+  .nav-item:hover { background: var(--hov); }
+  .nav-item.active { background: var(--hov); }
+  .nav-ico { width: 18px; text-align: center; }
+  .side-bot { padding: 12px 14px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); }
+  .badge { background: var(--accent); color: #fff; border-radius: 10px; font-size: 10px; padding: 1px 7px; margin-left: auto; }
+
+  /* ---------- MAIN ---------- */
+  #main { flex: 1; display: flex; flex-direction: column; height: 100%; min-width: 0; }
+  #topbar { display: none; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  #topbar .brand { font-size: 16px; }
+
+  #view { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+  #chatwrap { max-width: 780px; width: 100%; margin: 0 auto; padding: 20px 16px 8px; flex: 1; display: flex; flex-direction: column; }
+
+  /* chat bubbles */
+  .msg { display: flex; margin-bottom: 18px; animation: fade .25s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px);} to { opacity: 1; transform: none;} }
+  .msg.user { justify-content: flex-end; }
+  .msg.user .bubble { background: var(--panel); border-radius: 20px; padding: 10px 16px; max-width: 85%; white-space: pre-wrap; }
+  .msg.bot { justify-content: flex-start; }
+  .msg.bot .bubble { max-width: 95%; white-space: pre-wrap; line-height: 1.55; font-size: 15px; }
+  .msg.bot .av { width: 28px; height: 28px; border-radius: 50%; margin-right: 10px; flex-shrink: 0; overflow: hidden; }
+  .typing span { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-right: 4px; animation: blink 1.2s infinite; }
+  .typing span:nth-child(2){ animation-delay: .2s } .typing span:nth-child(3){ animation-delay: .4s }
+  @keyframes blink { 0%,80%,100%{ opacity:.25 } 40%{ opacity:1 } }
+
+  /* empty state */
+  #empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 20px; }
+  #empty img { width: 64px; height: 64px; border-radius: 16px; }
+  #empty h1 { font-size: 22px; font-weight: 600; }
+  #empty p { color: var(--muted); font-size: 14px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 560px; }
+  .chip { background: transparent; border: 1px solid var(--border); color: var(--text); border-radius: 18px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
+  .chip:hover { background: var(--hov); }
+
+  /* ---------- INPUT BAR (ChatGPT style) ---------- */
+  #inputbar { max-width: 780px; width: 100%; margin: 0 auto; padding: 8px 16px 14px; }
+  #inputbox { background: var(--input); border-radius: 26px; border: 1px solid var(--border); padding: 8px 8px 8px 6px; display: flex; align-items: flex-end; gap: 4px; transition: border-color .2s; }
+  #inputbox:focus-within { border-color: var(--hov-br); }
+  .ibtn { background: none; border: none; color: var(--text); width: 40px; height: 40px; border-radius: 50%; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .ibtn:hover { background: var(--hov); }
+  #plus { transform: scale(1.25); font-weight: 300; }
+  #msg { flex: 1; background: none; border: none; color: var(--text); font-size: 16px; font-family: inherit; resize: none; outline: none; max-height: 160px; line-height: 24px; padding: 8px 4px; }
+  #msg::placeholder { color: #8e8e8e; }
+  #mic.rec { color: #ff5252; animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { transform: scale(1.15); } }
+  #send { background: var(--send-bg); color: var(--send-fg); border: none; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; margin: 3px; }
+  #send:disabled { background: var(--hov); color: #8e8e8e; cursor: default; }
+  #send svg { width: 16px; height: 16px; }
+  .att { display: inline-flex; align-items: center; gap: 6px; background: var(--hov); border-radius: 14px; padding: 4px 10px; font-size: 12px; margin: 4px 0 0 6px; }
+  #disclaimer { text-align: center; font-size: 11px; color: var(--muted); padding: 4px 0 6px; }
+
+  /* ---------- PANELS ---------- */
+  .panel { max-width: 900px; width: 100%; margin: 0 auto; padding: 24px 16px; display: none; }
+  .panel.show { display: block; }
+  .panel h2 { font-size: 20px; margin-bottom: 14px; display: flex; align-items: center; gap: 10px; }
+  .card { background: var(--panel); border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; border: 1px solid var(--border); }
+  .card .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  .card .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .pbtn { background: var(--hov); color: var(--text); border: none; border-radius: 14px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+  .pbtn:hover { background: var(--hov); }
+  .pbtn.ok { background: var(--accent); color: #fff; }
+  .pbtn.no { background: #ef4141; color: #fff; }
+  .pill { background: var(--accent); color: #fff; border-radius: 10px; font-size: 11px; padding: 2px 8px; }
+  .pill.off { background: #6b6b6b; }
+  input.field, select.field { background: var(--field); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 12px; font-size: 14px; outline: none; width: 100%; margin-bottom: 10px; }
+  textarea.field { background: var(--field); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 12px; font-size: 14px; outline: none; width: 100%; min-height: 70px; font-family: inherit; margin-bottom: 10px; resize: vertical; }
+  .go { background: var(--accent); color: #fff; border: none; border-radius: 20px; padding: 10px 20px; font-size: 14px; cursor: pointer; }
+  .go:hover { filter: brightness(1.1); }
+  ul.list { list-style: none; }
+  ul.list li { padding: 8px 4px; border-bottom: 1px solid var(--border); font-size: 14px; }
+  a.lnk { color: #7ab8ff; text-decoration: none; word-break: break-all; }
+  .empty-note { color: var(--muted); font-size: 13px; padding: 10px 0; }
+  #overlay { display: none; position: fixed; inset: 0; background: #00000088; z-index: 40; }
+
+  /* mobile */
+  @media (max-width: 768px) {
+    #sidebar { position: fixed; left: 0; top: 0; transform: translateX(-100%); }
+    #sidebar.open { transform: translateX(0); box-shadow: 12px 0 40px #000000aa; }
+    #topbar { display: flex; }
+    #chatwrap { padding: 14px 12px 6px; }
+    #empty h1 { font-size: 20px; }
+  }
+</style>
+</head>
+<body class="light">
+
+<div id="overlay" onclick="toggleSidebar()"></div>
+
+<aside id="sidebar">
+  <div class="side-top">
+    <button class="hamb" onclick="toggleSidebar()">&#9776;</button>
+    <div class="brand"><span class="logo-slot" style="width:28px;height:28px;display:inline-flex"></span> Auto Bot</div>
+  </div>
+  <button id="newchat" onclick="newChat()">+ &nbsp;New chat</button>
+  <nav>
+    <button class="nav-item active" data-view="chat" onclick="showView('chat')"><span class="nav-ico">💬</span> Chat</button>
+    <button class="nav-item" data-view="tasks" onclick="showView('tasks')"><span class="nav-ico">⏱️</span> Tasks <span class="badge" id="bdg-tasks" style="display:none">0</span></button>
+    <button class="nav-item" data-view="approvals" onclick="showView('approvals')"><span class="nav-ico">✅</span> Approvals <span class="badge" id="bdg-appr" style="display:none">0</span></button>
+    <button class="nav-item" data-view="contacts" onclick="showView('contacts')"><span class="nav-ico">📱</span> Contacts</button>
+    <button class="nav-item" data-view="hunt" onclick="showView('hunt')"><span class="nav-ico">🚀</span> Product Hunt</button>
+    <button class="nav-item" data-view="buyers" onclick="showView('buyers')"><span class="nav-ico">🔎</span> Find Buyers</button>
+    <button class="nav-item" data-view="rules" onclick="showView('rules')"><span class="nav-ico">📜</span> Rules</button>
+    <button class="nav-item" data-view="memory" onclick="showView('memory')"><span class="nav-ico">🧠</span> Memory</button>
+    <button class="nav-item" onclick="toggleTheme()"><span class="nav-ico" id="theme-ico">🌙</span> <span id="theme-label">Dark mode</span></button>
+  </nav>
+  <div class="side-bot">Auto Bot v0.3 · e-commerce automation<br>Owner: Mr Wishal · Approvals first 👑</div>
+</aside>
+
+<main id="main">
+  <div id="topbar">
+    <button class="hamb" onclick="toggleSidebar()">&#9776;</button>
+    <div class="brand"><span class="logo-slot" style="width:26px;height:26px;display:inline-flex"></span> Auto Bot</div>
+  </div>
+
+  <div id="view">
+    <!-- CHAT -->
+    <div id="chatwrap">
+      <div id="empty">
+        <span class="logo-slot" style="width:64px;height:64px;display:inline-flex"></span>
+        <h1>Auto Bot</h1>
+        <p>Koi bhi task do — product hunt, buyer research, contact save, rule yaad rakhna...</p>
+        <div class="chips">
+          <button class="chip" onclick="quick(this)">Task product hunt daily US</button>
+          <button class="chip" onclick="quick(this)">Contact Ali 03001234567</button>
+          <button class="chip" onclick="quick(this)">Rule har purchase se pehle approval lo</button>
+          <button class="chip" onclick="quick(this)">Status</button>
+        </div>
+      </div>
+      <div id="msgs"></div>
+    </div>
+
+    <!-- PANELS -->
+    <div class="panel" id="p-tasks">
+      <h2>⏱️ Tasks</h2>
+      <select class="field" id="t-type"><option value="product-hunt">Product Hunt (Google Trends)</option><option value="find-buyers">Find Buyers</option><option value="alibaba-deal">Alibaba Deal Research</option><option value="upload-approved">Upload Approved Products</option></select>
+      <select class="field" id="t-geo"><option>US</option><option>UK</option><option>PK</option><option>DE</option><option>CA</option><option>AU</option></select>
+      <button class="go" onclick="addTask()">Add Task</button>
+      <div id="t-list" style="margin-top:16px"></div>
+    </div>
+
+    <div class="panel" id="p-approvals">
+      <h2>✅ Approvals <span class="badge" id="a-count"></span></h2>
+      <div class="empty-note">Sab kuch tumhare approval ke baad hi hota hai. Approved items upload queue mein jate hain.</div>
+      <div id="a-list"></div>
+    </div>
+
+    <div class="panel" id="p-contacts">
+      <h2>📱 Contacts</h2>
+      <input class="field" id="c-name" placeholder="Name">
+      <input class="field" id="c-phone" placeholder="Phone (+923001234567)">
+      <input class="field" id="c-note" placeholder="Note (optional)">
+      <button class="go" onclick="addContact()">Save Contact</button>
+      <div id="c-list" style="margin-top:16px"></div>
+    </div>
+
+    <div class="panel" id="p-hunt">
+      <h2>🚀 Product Hunt</h2>
+      <select class="field" id="h-geo"><option>US</option><option>UK</option><option>PK</option><option>DE</option><option>CA</option><option>AU</option></select>
+      <input class="field" id="h-niche" placeholder="Niche (optional, e.g. cat shirts)">
+      <button class="go" onclick="hunt()">Hunt Products</button>
+      <div id="h-out" style="margin-top:16px"></div>
+    </div>
+
+    <div class="panel" id="p-buyers">
+      <h2>🔎 Find Buyers</h2>
+      <input class="field" id="b-niche" placeholder='Niche, e.g. "custom t-shirts"'>
+      <button class="go" onclick="buyers()">Find Buyers</button>
+      <div id="b-out" style="margin-top:16px"></div>
+    </div>
+
+    <div class="panel" id="p-rules">
+      <h2>📜 Rules <span class="pill">PERMANENT</span></h2>
+      <div class="empty-note">Rules kabhi remove nahi hoti — sirf add/update (owner ka order).</div>
+      <input class="field" id="r-new" placeholder="Naya rule likho">
+      <button class="go" onclick="addRule()">Add Rule</button>
+      <ul class="list" id="r-list" style="margin-top:14px"></ul>
+    </div>
+
+    <div class="panel" id="p-memory">
+      <h2>🧠 Memory</h2>
+      <textarea class="field" id="m-new" placeholder="Kya yaad rakhna hai?"></textarea>
+      <button class="go" onclick="addMemory()">Save Memory</button>
+      <ul class="list" id="m-list" style="margin-top:14px"></ul>
+    </div>
+  </div>
+
+  <!-- INPUT BAR -->
+  <div id="inputbar">
+    <div id="inputbox">
+      <input type="file" id="file" style="display:none" onchange="filePick(this)">
+      <button class="ibtn" id="plus" onclick="document.getElementById('file').click()" title="Upload">+</button>
+      <textarea id="msg" rows="1" placeholder="Message Auto Bot"></textarea>
+      <button class="ibtn" id="mic" onclick="micToggle()" title="Voice input">🎤</button>
+      <button id="send" disabled onclick="send()" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+    </div>
+    <div id="disclaimer" style="display:none">Auto Bot mistakes kar sakta hai. Purchases hamesha owner approval ke baad.</div>
+  </div>
+</main>
+
+<script>
+const API = '/api';
+const LOGO_SVG = "<svg viewBox=\"0 0 200 200\" xmlns=\"http://www.w3.org/2000/svg\" style=\"width:100%;height:100%;display:block\">\n <defs>\n  <radialGradient id=\"hg\" cx=\"35%\" cy=\"30%\">\n   <stop offset=\"0%\" stop-color=\"#ffe97a\"/>\n   <stop offset=\"70%\" stop-color=\"#ffd60a\"/>\n   <stop offset=\"100%\" stop-color=\"#d4a800\"/>\n  </radialGradient>\n  <radialGradient id=\"eg\" cx=\"50%\" cy=\"40%\">\n   <stop offset=\"0%\" stop-color=\"#4a4a4a\"/>\n   <stop offset=\"100%\" stop-color=\"#111111\"/>\n  </radialGradient>\n  <filter id=\"glow\" x=\"-60%\" y=\"-60%\" width=\"220%\" height=\"220%\"><feGaussianBlur stdDeviation=\"2.5\" result=\"b\"/><feMerge><feMergeNode in=\"b\"/><feMergeNode in=\"SourceGraphic\"/></feMerge></filter>\n </defs>\n <style>\n  .ab-eye { transform-box: view-box; transform-origin: 100px 96px; animation: ab-blink 4.6s infinite; }\n  .ab-eye.r { animation-delay: .04s; }\n  @keyframes ab-blink { 0%,90%,100% { transform: scaleY(1); } 93.5% { transform: scaleY(.05); } 96.5% { transform: scaleY(1); } }\n  .ab-ant { transform-box: view-box; transform-origin: 100px 62px; animation: ab-wig 3.2s ease-in-out infinite; }\n  @keyframes ab-wig { 0%,100% { transform: rotate(-2deg); } 50% { transform: rotate(2deg); } }\n  .ab-tip { filter: url(#glow); animation: ab-pulse 3.2s ease-in-out infinite; }\n  .ab-tip.r { animation-delay: 1.6s; }\n  @keyframes ab-pulse { 0%,100% { opacity:.4; } 50% { opacity:1; } }\n  .ab-bot { transform-box: view-box; animation: ab-float 4s ease-in-out infinite; }\n  @keyframes ab-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }\n </style>\n <g class=\"ab-bot\">\n  <g class=\"ab-ant\">\n   <path d=\"M64 64 Q 54 40 42 36\" stroke=\"#1a1a1a\" stroke-width=\"5\" fill=\"none\" stroke-linecap=\"round\"/>\n   <circle class=\"ab-tip\" cx=\"40\" cy=\"35\" r=\"8\" fill=\"#1a1a1a\"/>\n   <path d=\"M136 64 Q 146 40 158 36\" stroke=\"#1a1a1a\" stroke-width=\"5\" fill=\"none\" stroke-linecap=\"round\"/>\n   <circle class=\"ab-tip r\" cx=\"160\" cy=\"35\" r=\"8\" fill=\"#1a1a1a\"/>\n  </g>\n  <rect x=\"18\" y=\"84\" width=\"12\" height=\"30\" rx=\"6\" fill=\"#1a1a1a\"/>\n  <rect x=\"170\" y=\"84\" width=\"12\" height=\"30\" rx=\"6\" fill=\"#1a1a1a\"/>\n  <rect x=\"32\" y=\"58\" width=\"136\" height=\"104\" rx=\"46\" fill=\"url(#hg)\" stroke=\"#b89600\" stroke-width=\"2\"/>\n  <g class=\"ab-eye\"><ellipse cx=\"80\" cy=\"96\" rx=\"11\" ry=\"13\" fill=\"url(#eg)\" filter=\"url(#glow)\"/></g>\n  <g class=\"ab-eye r\"><ellipse cx=\"120\" cy=\"96\" rx=\"11\" ry=\"13\" fill=\"url(#eg)\" filter=\"url(#glow)\"/></g>\n  <path d=\"M88 120 Q 100 128 112 120\" stroke=\"#1a1a1a\" stroke-width=\"4\" fill=\"none\" stroke-linecap=\"round\"/>\n </g>\n</svg>";
+const $ = id => document.getElementById(id);
+let attached = null;
+let chatHist = [];
+try { chatHist = JSON.parse(localStorage.getItem('ab_chat') || '[]'); } catch(e) {}
+
+/* ---------- helpers ---------- */
+async function get(route) { const r = await fetch(API + '/' + route); return r.json(); }
+async function post(route, body) { const r = await fetch(API + '/' + route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }); return r.json(); }
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function saveChat() { localStorage.setItem('ab_chat', JSON.stringify(chatHist.slice(-60))); }
+function isMobile() { return window.innerWidth <= 768; }
+function toggleSidebar() {
+  if (!isMobile()) return;
+  $('sidebar').classList.toggle('open');
+  $('overlay').style.display = $('sidebar').classList.contains('open') ? 'block' : 'none';
+}
+
+/* ---------- views ---------- */
+function showView(v) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('show'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.view === v));
+  const isChat = v === 'chat';
+  $('chatwrap').style.display = isChat ? 'flex' : 'none';
+  $('inputbar').style.display = isChat ? 'block' : 'none';
+  if (!isChat) $('p-' + v).classList.add('show');
+  if (isMobile() && $('sidebar').classList.contains('open')) toggleSidebar();
+  if (v === 'tasks') loadTasks();
+  if (v === 'approvals') loadApprovals();
+  if (v === 'contacts') loadContacts();
+  if (v === 'rules') loadRules();
+  if (v === 'memory') loadMemory();
+}
+function newChat() { chatHist = []; saveChat(); $('msgs').innerHTML = ''; $('empty').style.display = 'flex'; showView('chat'); if (isMobile()) toggleSidebar(); }
+
+/* ---------- chat ---------- */
+function bubble(role, text) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + role;
+  d.innerHTML = role === 'user'
+    ? '<div class="bubble">' + esc(text) + '</div>'
+    : '<span class="av">' + LOGO_SVG + '</span><div class="bubble">' + esc(text) + '</div>';
+  $('msgs').appendChild(d);
+  $('view').scrollTop = $('view').scrollHeight;
+}
+function typing() {
+  const d = document.createElement('div');
+  d.className = 'msg bot'; d.id = 'typing';
+  d.innerHTML = '<span class="av">' + LOGO_SVG + '</span><div class="bubble typing"><span></span><span></span><span></span></div>';
+  $('msgs').appendChild(d);
+  $('view').scrollTop = $('view').scrollHeight;
+}
+function quick(btn) { $('msg').value = btn.textContent; send(); }
+async function send() {
+  const m = $('msg').value.trim();
+  if (!m) return;
+  let full = m;
+  if (attached) full += '\n[File attached: ' + attached + ']';
+  $('msg').value = ''; autoGrow(); attached = null;
+  $('empty').style.display = 'none';
+  bubble('user', full);
+  setSend();
+  typing();
+  if (window.AutoBotNative) { window.__lastLocalMsg = m; if (AutoBotNative.handleChatCommand(m)) { return; } }
+  const d = await post('chat', { message: m, file: attached });
+  $('typing') && $('typing').remove();
+  const reply = d.reply || d.error || 'Hmm, no response.';
+  bubble('bot', reply);
+  chatHist.push({ u: full, b: reply }); saveChat();
+}
+function setSend() { $('send').disabled = !$('msg').value.trim() && !attached; }
+function autoGrow() { const t = $('msg'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px'; }
+
+/* mic (Web Speech API) */
+let rec = null, recOn = false;
+function micToggle() {
+  if (recOn && rec) { rec.stop(); return; }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { bubble('bot', 'Mic is browser mein support nahi — Chrome use karo ya type karo.'); return; }
+  rec = new SR();
+  rec.lang = 'ur-PK'; rec.interimResults = true; rec.continuous = false;
+  let base = $('msg').value;
+  rec.onstart = () => { recOn = true; $('mic').classList.add('rec'); };
+  rec.onresult = e => {
+    let s = ''; for (const r of e.results) s += r[0].transcript;
+    $('msg').value = (base ? base + ' ' : '') + s; autoGrow(); setSend();
+  };
+  rec.onerror = e => { if (e.error === 'language-not-supported' && rec.lang === 'ur-PK') { rec.lang = 'en-US'; rec.start(); } };
+  rec.onend = () => { recOn = false; $('mic').classList.remove('rec'); };
+  rec.start();
+}
+/* upload */
+function filePick(inp) {
+  if (!inp.files.length) return;
+  attached = inp.files[0].name + ' (' + Math.round(inp.files[0].size / 1024) + ' KB)';
+  const tag = document.createElement('div');
+  tag.className = 'att'; tag.id = 'att';
+  tag.innerHTML = '📎 ' + esc(attached) + ' <span style="cursor:pointer" onclick="attached=null;$(\'att\').remove();setSend()">✕</span>';
+  $('inputbox').insertBefore(tag, $('msg'));
+  setSend();
+}
+
+/* ---------- tasks ---------- */
+async function addTask() {
+  const type = $('t-type').value, geo = $('t-geo').value;
+  const d = await post('tasks', { type, schedule: 'daily', config: { geo } });
+  if (d.ok) { bubble('bot', 'Task add ho gaya: ' + type + ' (' + geo + ', daily) — main roz chalega.'); loadTasks(); }
+}
+async function loadTasks() {
+  const d = await get('tasks'); const el = $('t-list');
+  if (!d.tasks?.length) { el.innerHTML = '<div class="empty-note">Koi task nahi. Chat mein "task product hunt daily US" likho ya upar se add karo.</div>'; $('bdg-tasks').style.display = 'none'; return; }
+  const act = d.tasks.filter(t => t.active).length;
+  $('bdg-tasks').style.display = ''; $('bdg-tasks').textContent = act;
+  el.innerHTML = d.tasks.map(t => '<div class="card"><div class="row"><div><b>' + esc(t.type) + '</b> <span class="pill' + (t.active ? '' : ' off') + '">' + (t.active ? 'ACTIVE' : 'PAUSED') + '</span><div class="sub">' + esc(t.schedule) + ' · geo: ' + esc(t.config?.geo || '-') + '</div></div><div>' + (t.active ? '<button class="pbtn" onclick="taskAct(' + t.id + ',\'pause\')">Pause</button>' : '<button class="pbtn ok" onclick="taskAct(' + t.id + ',\'resume\')">Resume</button>') + ' <button class="pbtn no" onclick="taskAct(' + t.id + ',\'delete\')">Delete</button></div></div></div>').join('');
+}
+async function taskAct(id, action) { await post('tasks', { id, action }); loadTasks(); }
+
+/* ---------- approvals ---------- */
+async function loadApprovals() {
+  const d = await get('approvals'); const el = $('a-list');
+  const pend = (d.approvals || []).filter(a => a.status === 'pending');
+  $('a-count').textContent = pend.length;
+  $('bdg-appr').style.display = pend.length ? '' : 'none'; $('bdg-appr').textContent = pend.length;
+  if (!d.approvals?.length) { el.innerHTML = '<div class="empty-note">Abhi koi approval nahi. Product hunt task chalao — mila to yahan aayega.</div>'; return; }
+  el.innerHTML = d.approvals.slice(-20).reverse().map(a => {
+    const det = a.detail?.trends ? '<div class="sub">' + esc(a.detail.trends.slice(0, 6).join(' · ')) + '</div>' : '';
+    const btns = a.status === 'pending' ? '<div style="margin-top:10px"><button class="pbtn ok" onclick="decide(' + a.id + ',\'approve\')">✓ Approve</button> <button class="pbtn no" onclick="decide(' + a.id + ',\'reject\')">✕ Reject</button></div>' : '<span class="pill' + (a.status === 'approved' ? '' : ' off') + '">' + a.status.toUpperCase() + '</span>';
+    return '<div class="card"><div class="row"><div><b>' + esc(a.title || a.type) + '</b>' + det + '</div>' + btns + '</div></div>';
+  }).join('');
+}
+async function decide(id, decision) { const d = await post('approvals', { id, decision }); if (d.ok && d.next) bubble('bot', d.next); loadApprovals(); }
+
+/* ---------- contacts ---------- */
+async function addContact() {
+  const name = $('c-name').value.trim(), phone = $('c-phone').value.trim(), note = $('c-note').value.trim();
+  if (!name || !phone) { alert('Naam aur number dono chahiye'); return; }
+  const d = await post('contacts', { name, phone, note });
+  if (d.ok) { $('c-name').value = $('c-phone').value = $('c-note').value = ''; loadContacts(); }
+  else alert(d.error || 'Error');
+}
+async function loadContacts() {
+  const d = await get('contacts'); const el = $('c-list');
+  if (!d.contacts?.length) { el.innerHTML = '<div class="empty-note">Koi contact nahi. Chat mein "contact Ali 03001234567" likho.</div>'; return; }
+  el.innerHTML = d.contacts.map(c => '<div class="card"><div class="row"><div><b>' + esc(c.name) + '</b><div class="sub">' + esc(c.phone) + (c.note ? ' · ' + esc(c.note) : '') + '</div></div><div>' + (window.AutoBotNative ? '<button class="pbtn ok" onclick="AutoBotNative.saveToPhoneBook(\'' + esc(c.name) + '\', \'' + esc(c.phone) + '\')">💾 Phone</button> <button class="pbtn" onclick="AutoBotNative.callNumber(\'' + esc(c.phone) + '\')">📞 Call</button> ' : '<a href="tel:' + encodeURIComponent(c.phone) + '"><button class="pbtn">📞 Call</button></a> ') + '<a target="_blank" href="https://wa.me/' + encodeURIComponent(c.phone.replace(/[^0-9]/g, '')) + '"><button class="pbtn ok">💬 WhatsApp</button></a> <button class="pbtn no" onclick="delContact(' + c.id + ')">✕</button></div></div></div>').join('');
+}
+async function delContact(id) { await post('contacts', { id, action: 'delete' }); loadContacts(); }
+
+/* ---------- hunt / buyers ---------- */
+async function hunt() {
+  const out = $('h-out'); out.innerHTML = '<div class="empty-note">Hunting...</div>';
+  const d = await post('product-hunt', { geo: $('h-geo').value, niche: $('h-niche').value.trim() });
+  if (!d.ok) { out.innerHTML = '<div class="empty-note">' + esc(d.error || 'Fail') + '</div>'; return; }
+  let h = '<div class="card"><b>🔥 ' + d.geo + ' Trends</b><ul class="list">' + (d.trending || []).map(t => '<li>' + esc(t) + '</li>').join('') + '</ul></div>';
+  if (d.product_ideas?.length) h += '<div class="card"><b>💡 AI Product Ideas</b><ul class="list">' + d.product_ideas.map(i => '<li><b>' + esc(i.product) + '</b> — ' + esc(i.why) + '</li>').join('') + '</ul></div>';
+  if (d.note) h += '<div class="empty-note">' + esc(d.note) + '</div>';
+  out.innerHTML = h;
+}
+async function buyers() {
+  const niche = $('b-niche').value.trim();
+  if (!niche) { alert('Niche likho'); return; }
+  const out = $('b-out'); out.innerHTML = '<div class="empty-note">Searching buyers...</div>';
+  const d = await post('find-buyers', { niche });
+  if (!d.ok) { out.innerHTML = '<div class="empty-note">' + esc(d.error || 'Fail') + '</div>'; return; }
+  let h = (d.buyer_places || []).map(b => '<div class="card"><b>' + esc(b.title) + '</b><div class="sub"><a class="lnk" target="_blank" href="' + esc(b.url) + '">' + esc(b.url) + '</a></div></div>').join('');
+  if (!h) h = '<div class="empty-note">Is niche ke buyers abhi nahi mile — niche change kar ke try karo.</div>';
+  h += '<div class="card"><b>Tips</b><ul class="list">' + (d.tips || []).map(t => '<li>' + esc(t) + '</li>').join('') + '</ul></div>';
+  out.innerHTML = h;
+}
+
+/* ---------- rules / memory ---------- */
+async function addRule() {
+  const r = $('r-new').value.trim(); if (!r) return;
+  const d = await post('rules', { rule: r });
+  if (d.ok) { $('r-new').value = ''; loadRules(); }
+}
+async function loadRules() {
+  const d = await get('rules');
+  $('r-list').innerHTML = (d.rules || []).map((r, i) => '<li>' + (i + 1) + '. ' + esc(r) + '</li>').join('') || '<li class="empty-note">Koi rule nahi.</li>';
+}
+async function addMemory() {
+  const t = $('m-new').value.trim(); if (!t) return;
+  const d = await post('memory', { text: t });
+  if (d.ok) { $('m-new').value = ''; loadMemory(); }
+}
+async function loadMemory() {
+  const d = await get('memory');
+  $('m-list').innerHTML = (d.memories || []).slice(-30).reverse().map(m => '<li>' + esc(m.text) + '</li>').join('') || '<li class="empty-note">Kuch yaad nahi rakha.</li>';
+}
+
+/* ---------- theme ---------- */
+function toggleTheme() {
+  const light = document.body.classList.toggle('light');
+  localStorage.setItem('ab_theme', light ? 'light' : 'dark');
+  $('theme-ico').textContent = light ? '🌙' : '☀️';
+  $('theme-label').textContent = light ? 'Dark mode' : 'Light mode';
+}
+if (localStorage.getItem('ab_theme') === 'dark') {
+  document.body.classList.remove('light');
+  const ic = document.getElementById('theme-ico'), lb = document.getElementById('theme-label');
+  if (ic) ic.textContent = '☀️'; if (lb) lb.textContent = 'Light mode';
+}
+
+document.querySelectorAll('.logo-slot').forEach(el => el.innerHTML = LOGO_SVG);
+
+/* ---------- init ---------- */
+$('msg').addEventListener('input', () => { setSend(); autoGrow(); });
+$('msg').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+if (chatHist.length) {
+  $('empty').style.display = 'none';
+  chatHist.forEach(m => { bubble('user', m.u); bubble('bot', m.b); });
+}
+(async () => {
+  try {
+    const d = await get('status');
+    if (d.pending_approvals) { $('bdg-appr').style.display = ''; $('bdg-appr').textContent = d.pending_approvals; }
+  } catch (e) {}
+})();
+</script>
+<script>
+  window.__localBotReply = function (t) { $('typing') && $('typing').remove(); bubble('bot', t); chatHist.push({ u: window.__lastLocalMsg || '', b: t }); saveChat(); };
+  /* v2.6 offline brain: buttons wala reply (call/end-call/whatsapp buttons chat mein) */
+  window.__localBotReplyEx = function (t, btns) {
+    $('typing') && $('typing').remove();
+    var d = document.createElement('div');
+    d.className = 'msg bot';
+    var html = '<span class="av">' + LOGO_SVG + '</span><div class="bubble">' + esc(t);
+    (btns || []).forEach(function (b) {
+      var col = (b.action === 'endcall') ? '#ef4146' : '#10a37f';
+      html += '<div style="margin-top:8px"><button style="background:' + col + ';color:#fff;border:none;border-radius:20px;padding:9px 18px;font-size:14px;font-weight:600;cursor:pointer" onclick="abBtn(this)" data-action="' + esc(b.action) + '" data-phone="' + esc(b.phone || '') + '">' + esc(b.label) + '</button></div>';
+    });
+    html += '</div>';
+    d.innerHTML = html;
+    $('msgs').appendChild(d);
+    $('view').scrollTop = $('view').scrollHeight;
+    chatHist.push({ u: window.__lastLocalMsg || '', b: t }); saveChat();
+  };
+  window.abBtn = function (el) {
+    if (!window.AutoBotNative) return;
+    var a = el.getAttribute('data-action'), ph = el.getAttribute('data-phone');
+    if (a === 'call') AutoBotNative.callNumber(ph);
+    else if (a === 'endcall') AutoBotNative.endCall();
+    else if (a === 'wa') AutoBotNative.openWhatsApp(ph);
+    else if (a === 'dlmodel' && AutoBotNative.downloadModel) AutoBotNative.downloadModel(ph);
+      else if (a === 'dlvoice' && AutoBotNative.downloadVoiceModel) AutoBotNative.downloadVoiceModel(ph);
+    el.disabled = true; el.style.opacity = '0.5';
+  };
+  if (window.AutoBotNative) {
+    // Native mode banner ab hidden (feature phir bhi active hai, sirf visual notice nahi dikhta)
+    document.body.insertAdjacentHTML('afterbegin', '<div style="display:none;background:#0ea5b7;color:#04222a;padding:6px 14px;font-size:12px;font-weight:600;text-align:center">📱 Native mode ON — contacts phone mein save honge</div>');
+    var mo = document.getElementById('sidebar');
+    if (mo) mo.insertAdjacentHTML('beforeend', '<button class="nav-item" onclick="AutoBotNative.openTerminal()"><span class="nav-ico">🖥️</span> Terminal</button><button class="nav-item" onclick="AutoBotNative.openNativePanel()"><span class="nav-ico">⚡</span> Native Powers</button><button class="nav-item" onclick="AutoBotNative.openSettings()"><span class="nav-ico">⚙️</span> Settings</button>');
+  }
+  // Purchase disclaimer ab static bar nahi — sirf jab purchase-related baat chal rahi ho tab chat mein reminder
+  (function () {
+    var _msgs = document.getElementById('msgs');
+    var _lastWarn = 0;
+    var _rx = /\b(buy|purchase|order|kharid|khareed|checkout|payment|pay\s*now)\b/i;
+    function _maybeWarn(text) {
+      if (!text || !_rx.test(text)) return;
+      var now = Date.now();
+      if (now - _lastWarn < 15000) return;
+      _lastWarn = now;
+      if (!_msgs) return;
+      var d = document.createElement('div');
+      d.className = 'msg bot';
+      d.innerHTML = '<div class="bubble" style="color:var(--muted);font-size:13px">⚠️ Purchases hamesha owner approval ke baad hoti hain.</div>';
+      _msgs.appendChild(d);
+      d.scrollIntoView({ block: 'end' });
+    }
+    if (_msgs) {
+      new MutationObserver(function (muts) {
+        muts.forEach(function (m) {
+          m.addedNodes.forEach(function (n) { if (n.nodeType === 1) _maybeWarn(n.textContent || ''); });
+        });
+      }).observe(_msgs, { childList: true });
+    }
+  })();
+  // AutoBotNative cross-session history sync (online <-> offline dono ek hi chat history)
+  (function () {
+    if (!window.AutoBotNative) return;
+    try {
+      var origSetItem = localStorage.setItem.bind(localStorage);
+      localStorage.setItem = function (k, v) {
+        origSetItem(k, v);
+        if (k === 'ab_chat') { try { AutoBotNative.syncHistory(v); } catch (e) {} }
+      };
+      if (!sessionStorage.getItem('ab_hydrated')) {
+        sessionStorage.setItem('ab_hydrated', '1');
+        var mineRaw = localStorage.getItem('ab_chat');
+        var mineArr = mineRaw ? JSON.parse(mineRaw) : [];
+        if (mineArr.length === 0) {
+          var sharedRaw = AutoBotNative.getSharedHistory();
+          var sharedArr = sharedRaw ? JSON.parse(sharedRaw) : [];
+          if (sharedArr.length > 0) { localStorage.setItem('ab_chat', JSON.stringify(sharedArr)); location.reload(); }
+        }
+      }
+    } catch (e) {}
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+name: Build APK
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.7'
+
+      - name: Decode signing keystore
+        run: echo "${{ secrets.AUTOBOT_KEYSTORE_B64 }}" | base64 -d > autobot.p12
+
+      # ---------- AutoBot LITE (no Python — chhota, low-RAM safe, default) ----------
+      - name: Build AutoBot LITE APK
+        run: |
+          gradle assembleRelease -PliteBuild=true --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk AutoBot-Lite-v2.8.apk
+
+      # ---------- AutoBot PRO (Python 3.11 inside — zyada RAM wale phone ke liye) ----------
+      - name: Build AutoBot PRO APK
+        run: |
+          gradle clean assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk AutoBot-Pro-v2.8.apk
+
+      - name: Upload LITE APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoBot-LITE-APK
+          path: AutoBot-Lite-v2.8.apk
+
+      - name: Upload PRO APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoBot-PRO-APK
+          path: AutoBot-Pro-v2.8.apk

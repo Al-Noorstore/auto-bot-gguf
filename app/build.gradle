@@ -1,0 +1,85 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// AutoBot LITE = no Python (chhota APK, low-RAM safe)   -> build: gradle assembleRelease -PliteBuild=true
+// AutoBot PRO  = Python 3.11 bundled (Chaquopy)         -> build: gradle assembleRelease
+def isLite = project.hasProperty('liteBuild')
+if (!isLite) {
+    apply plugin: 'com.chaquo.python'
+}
+
+android {
+    namespace 'com.alnoor.autobot'
+    compileSdk 34
+
+    defaultConfig {
+        // LITE purane app ki jagah lagta hai; PRO alag app "Auto Bot Pro" ke roop mein
+        applicationId isLite ? "com.alnoor.autobot.gguf" : "com.alnoor.autobot.gguf.pro"
+        minSdk 24
+        targetSdk 34
+        versionCode 30
+        versionName isLite ? "3.1-GGUF-LITE" : "3.1-GGUF-PRO"
+        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
+        resValue "string", "app_label", isLite ? "Auto Bot" : "Auto Bot Pro"
+    }
+
+    sourceSets {
+        main {
+            // LITE: stub PyEngine (no Python) | PRO: asli PyEngine (Chaquopy)
+            java.srcDirs += isLite ? 'src/nopy/kotlin' : 'src/py/kotlin'
+        }
+    }
+
+    signingConfigs {
+        release {
+            storeFile rootProject.file("autobot.p12")
+            storePassword "autobot2026"
+            keyAlias "autobot"
+            keyPassword "autobot2026"
+            storeType "PKCS12"
+        }
+    }
+    packagingOptions {
+        jniLibs { useLegacyPackaging = true }
+    }
+
+    buildTypes {
+        debug { minifyEnabled false }
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = "17" }
+    buildFeatures { buildConfig true }
+}
+
+if (!isLite) {
+    chaquopy {
+        defaultConfig {
+            version "3.11"
+            pip {
+                // core (pure Python) packages — app ke andar offline available
+                install "requests"
+                install "python-dateutil"
+                install "pytz"
+                install "beautifulsoup4"
+            }
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    // v3.0: offline voice recognition (Vosk)
+    implementation 'com.alphacephei:vosk-android:0.3.75'
+    // v3.0: libsu — asli shell engine (root su support ke saath)
+    implementation 'com.github.topjohnwu.libsu:core:6.0.0'
+}
