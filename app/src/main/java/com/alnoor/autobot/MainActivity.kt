@@ -27,6 +27,7 @@ import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.telecom.TelecomManager
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.File
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -997,6 +998,54 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) { appendTerm("\n(crash log read fail: " + e.message + ")\n") }
     }
 
+    // ---------- v3.2: GitHub build/APK download helpers ----------
+    private fun ghDownload(url: String, token: String): ByteArray? = try {
+        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 30000
+        conn.readTimeout = 180000
+        conn.setRequestProperty("Authorization", "Bearer $token")
+        conn.setRequestProperty("Accept", "application/vnd.github+json")
+        if (conn.responseCode !in 200..299) { conn.disconnect(); null }
+        else { val b = conn.inputStream.use { it.readBytes() }; conn.disconnect(); b }
+    } catch (e: Exception) { null }
+
+    private fun extractApks(zip: ByteArray, repo: String): List<String> {
+        val out = ArrayList<String>()
+        try {
+            val zin = java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(zip))
+            var e = zin.nextEntry
+            while (e != null) {
+                if (!e.isDirectory && e.name.endsWith(".apk")) {
+                    val bytes = zin.readBytes()
+                    val p = saveToDownloads(repo + "-" + e.name.substringAfterLast('/'), bytes)
+                    if (p != null) out.add(p)
+                }
+                e = zin.nextEntry
+            }
+            zin.close()
+        } catch (e: Exception) { }
+        return out
+    }
+
+    private fun saveToDownloads(name: String, bytes: ByteArray): String? = try {
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            val values = android.content.ContentValues()
+            values.put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
+            values.put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+            values.put(android.provider.MediaStore.Downloads.RELATIVE_PATH, "Download/AutoBotBuilds")
+            val uri = contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            if (uri == null) null
+            else { contentResolver.openOutputStream(uri)?.use { it.write(bytes) }; "Download/AutoBotBuilds/$name" }
+        } else {
+            @Suppress("DEPRECATION")
+            val dir = java.io.File(android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS), "AutoBotBuilds")
+            dir.mkdirs()
+            val fl = java.io.File(dir, name)
+            fl.writeBytes(bytes)
+            "Download/AutoBotBuilds/$fl.name"
+        }
+    } catch (e: Exception) { null }
+
     // v3.1.2: UI hamesha bundled se (APK ke saath update hoti hai, website purani ho to bhi)
     // server features (tasks/contacts/chat proxy) direct CORS ke through chalte hain
     private fun loadSite() {
@@ -1193,7 +1242,122 @@ class MainActivity : AppCompatActivity() {
                             } else "❌ GitHub error (HTTP $c): ${t.take(300)}"
                         }
                     }
-                    else -> "🐙 GitHub commands:\n• github status — account info\n• github repo banao <naam> — naya private repo"
+                    rest.startsWith("build ") || rest == "build" -> {
+                        val repo = rest.removePrefix("build").trim()
+                        if (repo.isBlank()) "❌ Repo ka naam bolo: github build auto-bot-mobile"
+                        else {
+                            val (uc, ut) = TokenVault.http("GET", "https://api.github.com/user", hdr, null)
+                            val login = if (uc in 200..299) JSONObject(ut).optString("login") else ""
+                            val full = if (repo.contains("/")) repo else "$login/$repo"
+                            if (login.isBlank()) "❌ Token kaam nahi kar raha (HTTP $uc)"
+                            else {
+                                val (wc, wt) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/workflows", hdr, null)
+                                val wfs = if (wc in 200..299) JSONObject(wt).optJSONArray("workflows") ?: JSONArray() else JSONArray()
+                                if (wc !in 200..299) "❌ Repo nahi mila ya access nahi: $full (HTTP $wc)"
+                                else if (wfs.length() == 0) "❌ $full mein koi Actions workflow nahi"
+                                else {
+                                    val wfName = wfs.getJSONObject(0).optString("name")
+                                    val wfId = wfs.getJSONObject(0).optInt("id")
+                                    val (rc, rt) = TokenVault.http("GET", "https://api.github.com/repos/$full", hdr, null)
+                                    val branch = if (rc in 200..299) JSONObject(rt).optString("default_branch", "main") else "main"
+                                    val (dc, _) = TokenVault.http("POST", "https://api.github.com/repos/$full/actions/workflows/$wfId/dispatches", hdr, JSONObject().put("ref", branch).toString())
+                                    if (dc != 202) "❌ Workflow start nahi hua (HTTP $dc) — workflow mein 'workflow_dispatch' trigger chahiye"
+                                    else {
+                                        runOnUiThread { chatReply("🚀 '$wfName' chal raha hai ($full @ $branch)...\nBuild mein 5-10 min lagte hain, main wait kar raha hoon.") }
+                                        var conc = ""
+                                        var runId = 0L
+                                        val t0 = System.currentTimeMillis()
+                                        while (System.currentTimeMillis() - t0 < 25 * 60 * 1000L) {
+                                            Thread.sleep(12000)
+                                            val (pc, pt) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/runs?per_page=1&event=workflow_dispatch", hdr, null)
+                                            if (pc in 200..299) {
+                                                val rs = JSONObject(pt).optJSONArray("workflow_runs") ?: JSONArray()
+                                                if (rs.length() > 0) {
+                                                    val r = rs.getJSONObject(0)
+                                                    if (r.optString("status") == "completed") { conc = r.optString("conclusion"); runId = r.optLong("id"); break }
+                                                }
+                                            }
+                                        }
+                                        if (conc.isEmpty()) "⏳ Build abhi chal raha hai (25 min+). Baad mein 'github apk $repo' se APKs le lena."
+                                        else if (conc != "success") "❌ Build fail hua ($conc). Log: https://github.com/$full/actions"
+                                        else {
+                                            runOnUiThread { chatReply("✅ Build green! APKs phone mein save kar raha hoon...") }
+                                            val (ac, at) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/runs/$runId/artifacts", hdr, null)
+                                            val arts = if (ac in 200..299) JSONObject(at).optJSONArray("artifacts") ?: JSONArray() else JSONArray()
+                                            if (arts.length() == 0) "✅ Build ho gaya par koi artifact (APK) nahi bana."
+                                            else {
+                                                val saved = StringBuilder()
+                                                for (i in 0 until arts.length()) {
+                                                    val a = arts.getJSONObject(i)
+                                                    val zip = ghDownload("https://api.github.com/repos/$full/actions/artifacts/" + a.optInt("id") + "/zip", token)
+                                                    if (zip != null) for (p in extractApks(zip, repo)) saved.append("📥 ").append(p).append("\n")
+                                                }
+                                                if (saved.isBlank()) "❌ APK download fail. Baad mein 'github apk $repo' try karo."
+                                                else "✅ Build complete! Phone mein save:\n$saved(File manager → Download → AutoBotBuilds)"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    rest.startsWith("apk ") || rest.startsWith("zip ") -> {
+                        val repo = rest.removePrefix(if (rest.startsWith("apk ")) "apk" else "zip").trim()
+                        if (repo.isBlank()) "❌ Repo ka naam bolo: github apk auto-bot-mobile"
+                        else {
+                            val (uc, ut) = TokenVault.http("GET", "https://api.github.com/user", hdr, null)
+                            val login = if (uc in 200..299) JSONObject(ut).optString("login") else ""
+                            val full = if (repo.contains("/")) repo else "$login/$repo"
+                            val (rc, rt) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/runs?per_page=1&status=success", hdr, null)
+                            if (rc !in 200..299) "❌ Repo nahi mila: $full (HTTP $rc)"
+                            else {
+                                val runs = JSONObject(rt).optJSONArray("workflow_runs") ?: JSONArray()
+                                if (runs.length() == 0) "❌ $full mein koi successful build nahi"
+                                else {
+                                    runOnUiThread { chatReply("📥 Latest successful build ki files la raha hoon...") }
+                                    val runId = runs.getJSONObject(0).optLong("id")
+                                    val (ac, at) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/runs/$runId/artifacts", hdr, null)
+                                    val arts = if (ac in 200..299) JSONObject(at).optJSONArray("artifacts") ?: JSONArray() else JSONArray()
+                                    if (arts.length() == 0) "❌ Us build mein koi artifact nahi"
+                                    else {
+                                        val saved = StringBuilder()
+                                        for (i in 0 until arts.length()) {
+                                            val a = arts.getJSONObject(i)
+                                            val zip = ghDownload("https://api.github.com/repos/$full/actions/artifacts/" + a.optInt("id") + "/zip", token)
+                                            if (zip != null) for (p in extractApks(zip, repo)) saved.append("📥 ").append(p).append("\n")
+                                        }
+                                        if (saved.isBlank()) "❌ Download fail. Internet/token check karo."
+                                        else "✅ Save ho gaya:\n$saved(File manager → Download → AutoBotBuilds)"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    rest.startsWith("runs ") -> {
+                        val repo = rest.removePrefix("runs").trim()
+                        if (repo.isBlank()) "❌ Repo ka naam bolo: github runs auto-bot-mobile"
+                        else {
+                            val (uc, ut) = TokenVault.http("GET", "https://api.github.com/user", hdr, null)
+                            val login = if (uc in 200..299) JSONObject(ut).optString("login") else ""
+                            val full = if (repo.contains("/")) repo else "$login/$repo"
+                            val (rc, rt) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/runs?per_page=3", hdr, null)
+                            if (rc !in 200..299) "❌ Repo nahi mila: $full (HTTP $rc)"
+                            else {
+                                val runs = JSONObject(rt).optJSONArray("workflow_runs") ?: JSONArray()
+                                if (runs.length() == 0) "📭 $full mein abhi koi run nahi"
+                                else {
+                                    val sb = StringBuilder("📋 $full — last runs:\n")
+                                    for (i in 0 until runs.length()) {
+                                        val r = runs.getJSONObject(i)
+                                        val st = if (r.optString("status") == "completed") r.optString("conclusion") else r.optString("status") + " (chal raha)"
+                                        sb.append("• ").append(r.optString("name")).append(" — ").append(st).append(" — ").append(r.optString("created_at").take(16).replace("T", " ")).append("\n")
+                                    }
+                                    sb.toString()
+                                }
+                            }
+                        }
+                    }
+                    else -> "🐙 GitHub commands:\n• github status — account info\n• github repo banao <naam> — naya private repo\n• github build <repo> — Actions se APK build + phone mein save\n• github apk <repo> — last build ki APKs phone mein\n• github runs <repo> — build status"
                 }
                 runOnUiThread { chatReply(reply) }
             }.start()
