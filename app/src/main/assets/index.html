@@ -108,6 +108,22 @@
   .empty-note { color: var(--muted); font-size: 13px; padding: 10px 0; }
   #overlay { display: none; position: fixed; inset: 0; background: #00000088; z-index: 40; }
 
+  /* v3.1: copy buttons, history, toast */
+  .msg.bot .bcol { display: flex; flex-direction: column; max-width: 95%; }
+  .copyrow { display: flex; gap: 8px; margin-top: 2px; }
+  .copybtn { background: none; border: none; color: var(--muted); font-size: 12px; cursor: pointer; padding: 4px 8px; border-radius: 8px; display: inline-flex; align-items: center; gap: 5px; }
+  .copybtn:hover { background: var(--hov); color: var(--text); }
+  #toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); background: var(--panel); color: var(--text); border: 1px solid var(--border); padding: 8px 18px; border-radius: 20px; font-size: 13px; z-index: 99; opacity: 0; transition: opacity .25s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+  #sideclose { display: none; }
+  .hist-item { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 8px; cursor: pointer; }
+  .hist-item:active { filter: brightness(1.15); }
+  .hist-main { flex: 1; min-width: 0; }
+  .hist-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hist-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .hist-del { background: none; border: none; color: var(--muted); font-size: 16px; padding: 6px 10px; border-radius: 8px; }
+  .hist-del:hover { background: var(--hov); color: #ef4141; }
+
   /* mobile */
   @media (max-width: 768px) {
     #sidebar { position: fixed; left: 0; top: 0; transform: translateX(-100%); }
@@ -115,21 +131,25 @@
     #topbar { display: flex; }
     #chatwrap { padding: 14px 12px 6px; }
     #empty h1 { font-size: 20px; }
+    #sideclose { display: block; }
   }
 </style>
 </head>
 <body class="light">
 
 <div id="overlay" onclick="toggleSidebar()"></div>
+<div id="toast"></div>
 
 <aside id="sidebar">
   <div class="side-top">
     <button class="hamb" onclick="toggleSidebar()">&#9776;</button>
     <div class="brand"><span class="logo-slot" style="width:28px;height:28px;display:inline-flex"></span> Auto Bot</div>
+    <button class="hamb" id="sideclose" onclick="toggleSidebar()" title="Close menu">&#10005;</button>
   </div>
   <button id="newchat" onclick="newChat()">+ &nbsp;New chat</button>
   <nav>
     <button class="nav-item active" data-view="chat" onclick="showView('chat')"><span class="nav-ico">💬</span> Chat</button>
+    <button class="nav-item" data-view="history" onclick="showView('history')"><span class="nav-ico">🗂️</span> History</button>
     <button class="nav-item" data-view="tasks" onclick="showView('tasks')"><span class="nav-ico">⏱️</span> Tasks <span class="badge" id="bdg-tasks" style="display:none">0</span></button>
     <button class="nav-item" data-view="approvals" onclick="showView('approvals')"><span class="nav-ico">✅</span> Approvals <span class="badge" id="bdg-appr" style="display:none">0</span></button>
     <button class="nav-item" data-view="contacts" onclick="showView('contacts')"><span class="nav-ico">📱</span> Contacts</button>
@@ -146,6 +166,7 @@
   <div id="topbar">
     <button class="hamb" onclick="toggleSidebar()">&#9776;</button>
     <div class="brand"><span class="logo-slot" style="width:26px;height:26px;display:inline-flex"></span> Auto Bot</div>
+    <button class="hamb" style="margin-left:auto" onclick="newChat()" title="New chat">&#10010;</button>
   </div>
 
   <div id="view">
@@ -218,6 +239,12 @@
       <button class="go" onclick="addMemory()">Save Memory</button>
       <ul class="list" id="m-list" style="margin-top:14px"></ul>
     </div>
+
+    <div class="panel" id="p-history">
+      <h2>🗂️ Chat History</h2>
+      <div class="empty-note">Kisi bhi chat par tap karo — wahi se continue hoga. ✕ se delete.</div>
+      <div id="hist-list"></div>
+    </div>
   </div>
 
   <!-- INPUT BAR -->
@@ -226,6 +253,7 @@
       <input type="file" id="file" style="display:none" onchange="filePick(this)">
       <button class="ibtn" id="plus" onclick="document.getElementById('file').click()" title="Upload">+</button>
       <textarea id="msg" rows="1" placeholder="Message Auto Bot"></textarea>
+      <button class="ibtn" id="copyprompt" onclick="copyPrompt()" title="Copy prompt">⧉</button>
       <button class="ibtn" id="mic" onclick="micToggle()" title="Voice input">🎤</button>
       <button id="send" disabled onclick="send()" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
     </div>
@@ -267,8 +295,55 @@ function showView(v) {
   if (v === 'contacts') loadContacts();
   if (v === 'rules') loadRules();
   if (v === 'memory') loadMemory();
+  if (v === 'history') loadHistory();
 }
-function newChat() { chatHist = []; saveChat(); $('msgs').innerHTML = ''; $('empty').style.display = 'flex'; showView('chat'); if (isMobile()) toggleSidebar(); }
+let curChat = null;
+function chatsAll() { try { return JSON.parse(localStorage.getItem('ab_chats') || '[]'); } catch (e) { return []; } }
+function chatsPut(a) { try { localStorage.setItem('ab_chats', JSON.stringify(a.slice(-50))); } catch (e) {} }
+function chatById(id) { return chatsAll().find(c => c.id === id); }
+function ensureChat(firstLine) {
+  if (curChat) { const c = chatById(curChat); if (c) return c; }
+  const title = String(firstLine || 'New chat').split('\n')[0].slice(0, 48).trim() || 'New chat';
+  const c = { id: Date.now(), title, updated: Date.now(), msgs: [] };
+  const a = chatsAll(); a.unshift(c); chatsPut(a);
+  curChat = c.id; localStorage.setItem('ab_last_chat', String(c.id));
+  return c;
+}
+function chatPush(u, b) {
+  chatHist.push({ u, b }); saveChat();
+  const c = curChat ? chatById(curChat) : null;
+  if (!c) return;
+  c.msgs.push({ u, b }); c.updated = Date.now();
+  const a = chatsAll(); const i = a.findIndex(x => x.id === c.id);
+  if (i >= 0) { a.splice(i, 1); a.unshift(c); chatsPut(a); }
+}
+function openChat(id) {
+  const c = chatById(id); if (!c) return;
+  curChat = id; localStorage.setItem('ab_last_chat', String(id));
+  $('msgs').innerHTML = '';
+  $('empty').style.display = c.msgs.length ? 'none' : 'flex';
+  c.msgs.forEach(m => { if (m.u) bubble('user', m.u); if (m.b) bubble('bot', m.b); });
+  showView('chat');
+  if (isMobile() && $('sidebar').classList.contains('open')) toggleSidebar();
+}
+function deleteChat(id) {
+  chatsPut(chatsAll().filter(c => c.id !== id));
+  if (curChat === id) { curChat = null; $('msgs').innerHTML = ''; $('empty').style.display = 'flex'; }
+  loadHistory();
+}
+function loadHistory() {
+  const el = $('hist-list'); const a = chatsAll();
+  el.innerHTML = '';
+  if (!a.length) { el.innerHTML = '<div class="empty-note">Abhi koi chat nahi. ✚ New chat se shuru karo.</div>'; return; }
+  a.forEach(c => {
+    const d = document.createElement('div'); d.className = 'hist-item';
+    d.onclick = e => { if (e.target.closest('.hist-del')) return; openChat(c.id); };
+    const dt = new Date(c.updated).toLocaleString();
+    d.innerHTML = '<div class="hist-main"><div class="hist-title">' + esc(c.title) + '</div><div class="hist-sub">' + c.msgs.length + ' messages · ' + dt + '</div></div><button class="hist-del" onclick="deleteChat(' + c.id + ')">&#10005;</button>';
+    el.appendChild(d);
+  });
+}
+function newChat() { curChat = null; chatHist = []; saveChat(); $('msgs').innerHTML = ''; $('empty').style.display = 'flex'; showView('chat'); if (isMobile() && $('sidebar').classList.contains('open')) toggleSidebar(); }
 
 /* ---------- chat ---------- */
 function bubble(role, text) {
@@ -276,7 +351,7 @@ function bubble(role, text) {
   d.className = 'msg ' + role;
   d.innerHTML = role === 'user'
     ? '<div class="bubble">' + esc(text) + '</div>'
-    : '<span class="av">' + LOGO_SVG + '</span><div class="bubble">' + esc(text) + '</div>';
+    : '<span class="av">' + LOGO_SVG + '</span><div class="bcol"><div class="bubble">' + esc(text) + '</div><div class="copyrow"><button class="copybtn" onclick="copyBubble(this)">&#10697; Copy</button></div></div>';
   $('msgs').appendChild(d);
   $('view').scrollTop = $('view').scrollHeight;
 }
@@ -296,6 +371,7 @@ async function send() {
   $('msg').value = ''; autoGrow(); attached = null;
   $('empty').style.display = 'none';
   bubble('user', full);
+  ensureChat(m);
   setSend();
   typing();
   if (window.AutoBotNative) { window.__lastLocalMsg = m; if (AutoBotNative.handleChatCommand(m)) { return; } }
@@ -303,9 +379,25 @@ async function send() {
   $('typing') && $('typing').remove();
   const reply = d.reply || d.error || 'Hmm, no response.';
   bubble('bot', reply);
-  chatHist.push({ u: full, b: reply }); saveChat();
+  chatPush(full, reply);
 }
 function setSend() { $('send').disabled = !$('msg').value.trim() && !attached; }
+let toastT = null;
+function toast(t) { const el = $('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove('show'), 1600); }
+function execCopy(t) {
+  const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta);
+  ta.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+  ta.remove(); toast(ok ? '\u2713 Copied' : 'Copy fail');
+}
+function copyText(t) {
+  if (!t) { toast('Kuch copy karne ko nahi hai'); return; }
+  if (window.AutoBotNative && AutoBotNative.copyToClipboard) { AutoBotNative.copyToClipboard(t); return; }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(t).then(() => toast('\u2713 Copied')).catch(() => execCopy(t));
+  } else execCopy(t);
+}
+function copyPrompt() { const t = $('msg').value.trim(); if (!t) { toast('Prompt khali hai — kuch likho'); return; } copyText(t); }
+function copyBubble(btn) { const b = btn.closest('.bcol').querySelector('.bubble'); copyText(b.innerText); btn.textContent = '\u2713 Copied'; setTimeout(() => btn.textContent = '\u238B Copy', 1500); }
 function autoGrow() { const t = $('msg'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px'; }
 
 /* mic (Web Speech API) */
@@ -442,10 +534,20 @@ document.querySelectorAll('.logo-slot').forEach(el => el.innerHTML = LOGO_SVG);
 /* ---------- init ---------- */
 $('msg').addEventListener('input', () => { setSend(); autoGrow(); });
 $('msg').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
-if (chatHist.length) {
-  $('empty').style.display = 'none';
-  chatHist.forEach(m => { bubble('user', m.u); bubble('bot', m.b); });
-}
+(function restoreChats() {
+  let all = chatsAll();
+  if (!all.length && chatHist.length) {
+    const first = chatHist.find(m => m.u);
+    const c = { id: Date.now(), title: (first ? String(first.u).split('\n')[0].slice(0, 48).trim() : 'Purani chat'), updated: Date.now(), msgs: chatHist.slice() };
+    chatsPut([c]); all = [c];
+  }
+  const lastId = parseInt(localStorage.getItem('ab_last_chat') || '0');
+  if (lastId && all.some(c => c.id === lastId)) {
+    const keep = $('view').scrollTop; // no-op guard
+    openChat(lastId);
+    $('view').scrollTop = 0;
+  }
+})();
 (async () => {
   try {
     const d = await get('status');
@@ -454,7 +556,7 @@ if (chatHist.length) {
 })();
 </script>
 <script>
-  window.__localBotReply = function (t) { $('typing') && $('typing').remove(); bubble('bot', t); chatHist.push({ u: window.__lastLocalMsg || '', b: t }); saveChat(); };
+  window.__localBotReply = function (t) { $('typing') && $('typing').remove(); bubble('bot', t); if (window.__lastLocalMsg) ensureChat(window.__lastLocalMsg); chatPush(window.__lastLocalMsg || '', t); };
   /* v2.6 offline brain: buttons wala reply (call/end-call/whatsapp buttons chat mein) */
   window.__localBotReplyEx = function (t, btns) {
     $('typing') && $('typing').remove();
@@ -469,7 +571,8 @@ if (chatHist.length) {
     d.innerHTML = html;
     $('msgs').appendChild(d);
     $('view').scrollTop = $('view').scrollHeight;
-    chatHist.push({ u: window.__lastLocalMsg || '', b: t }); saveChat();
+    if (window.__lastLocalMsg) ensureChat(window.__lastLocalMsg);
+    chatPush(window.__lastLocalMsg || '', t);
   };
   window.abBtn = function (el) {
     if (!window.AutoBotNative) return;

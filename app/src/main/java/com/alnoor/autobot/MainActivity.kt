@@ -1427,6 +1427,16 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun openTerminal() { runOnUiThread { showTerminal(true) } }
 
+        // v3.1: chat copy buttons — clipboard + toast
+        @JavascriptInterface
+        fun copyToClipboard(text: String) {
+            try {
+                val cm = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("Auto Bot", text))
+                runOnUiThread { Toast.makeText(this@MainActivity, "✓ Copied", Toast.LENGTH_SHORT).show() }
+            } catch (_: Exception) {}
+        }
+
         // website chat se local commands — ye bot ko powerful banata hai
         @JavascriptInterface
         fun handleChatCommand(msg: String): Boolean {
