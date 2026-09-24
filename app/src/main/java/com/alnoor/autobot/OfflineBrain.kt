@@ -792,19 +792,46 @@ object OfflineBrain {
             }
         }
 
-        // ---------- 7) BROWSER search ----------
-        val browserWord = low.contains("browser") || low.contains("google") || low.contains("web") || low.contains("براؤزر") || low.contains("गूगल") || low.contains("ब्राउज़र")
-        val searchWord = SEARCH_WORDS.any { words.contains(it) } || low.contains("search")
+        // ---------- 7) BROWSER / CHROME search + TAB control ----------
+        // Keyword yahan kahin bhi ho sakta hai -- shuru, beech, aakhir -- sab jagah pehchana jata hai.
+        val browserWord = words.any { it in setOf("browser", "chrome", "google", "web", "\u0628\u0631\u0627\u0624\u0632\u0631", "\u0917\u0942\u0917\u0932", "\u092c\u094d\u0930\u093e\u0909\u091c\u0930") }
+        val searchWord = SEARCH_WORDS.any { words.contains(it) } || words.contains("search")
+        val hasTabWord = words.contains("tab") || words.contains("tabs")
+        val newTabWord = hasTabWord && words.any { it in setOf("new", "naya", "nayi", "naye") }
+        val sameTabWord = hasTabWord && words.any { it in setOf("same", "wahi", "isi", "usi") }
+        val closeTabWord = hasTabWord && words.any { it in setOf("band", "bandh", "close", "\u0628\u0646\u062f", "\u092c\u0902\u0926") } && !searchWord && !newTabWord && !sameTabWord
+
+        // 7a) sirf tab close/band -- koi search nahi ("tab band karo" / "band karo tab" / "close tab", order matters nahi)
+        if (closeTabWord) {
+            r.text = t(lang, "Closing active tab.", "Active tab band kar raha hoon.")
+            r.actions.add(BrainAction("closetab", ""))
+            return r
+        }
+
+        // 7b) browser/chrome + search -- query keyword ke ird-gird kisi bhi jagah ho sakti hai
         if (browserWord && searchWord) {
-            val q = low
-                .replace(Regex("^(?:open\\s+)?(?:browser|google|web|براؤزر|गूगल|ब्राउज़र)\\s+(?:par|pe|per|se|mein|main|پर|पर)?\\s*(?:and\\s+)?"), "")
-                .replace(Regex("^(?:search|dhoondo|dhundo|dhoond|find)\\s+(?:the\\s+)?(?:browser\\s+|google\\s+|web\\s+)?(?:par\\s+|pe\\s+)?(?:for\\s+|ke liye\\s+|k liye\\s+)?"), "")
-                .replace(Regex("\\s+(?:karo|kro|krdo|kardo|kar|do|de|dy|dikhao|dikha|hai|ha|par|pe|per|پर|पर)+\\s*$"), "").trim()
+            val skip = setOf(
+                "open", "kholo", "khol", "launch", "start", "chalu", "chalao",
+                "browser", "chrome", "google", "web", "\u0628\u0631\u0627\u0624\u0632\u0631", "\u0917\u0942\u0917\u0932", "\u092c\u094d\u0930\u093e\u0909\u091c\u0930",
+                "search", "dhoondo", "dhundo", "dhoond", "find", "dekho", "dekh", "laga", "lagao", "\u0633\u0631\u0686", "\u0938\u0930\u094d\u091a",
+                "at", "in", "on", "mein", "main", "par", "pe", "per", "\u0645\u06cc\u06ba", "\u067e\u0631", "\u092e\u0947\u0902", "\u092a\u0930",
+                "new", "naya", "nayi", "naye", "same", "wahi", "isi", "usi", "tab", "tabs",
+                "karo", "kro", "krdo", "kardo", "kar", "do", "de", "dy", "please", "na", "jaldi", "abhi", "hai", "ha",
+                "and", "aur", "the", "a", "an", "for", "ke", "liye", "k"
+            )
+            val q = words.filter { it.replace(Regex("[^a-z0-9\u0900-\u097F\u0600-\u06FF]"), "") !in skip }.joinToString(" ").trim()
             if (q.isNotBlank()) {
-                r.text = t(lang, "🔍 Searching the web: \"$q\"", "🔍 Web par search khol raha hoon: \"$q\"")
-                r.actions.add(BrainAction("browsersearch", cleanQuery(q)))
+                val where = if (newTabWord) "naye tab mein" else if (sameTabWord) "isi tab mein" else "browser mein"
+                r.text = t(lang, "Searching: \"$q\"", "\"$q\" search kar raha hoon ($where).")
+                r.actions.add(BrainAction(if (newTabWord) "browsernewtabsearch" else if (sameTabWord) "browsersametabsearch" else "browsersearch", cleanQuery(q)))
                 return r
             }
+        }
+
+        // 7c) sirf browser/chrome kholna, tab directive ke saath -- bina search query
+        if (browserWord && OPEN_WORDS.any { words.contains(it) } && !searchWord) {
+            if (newTabWord) { r.text = t(lang, "Opening new tab.", "Nayi tab khol raha hoon."); r.actions.add(BrainAction("browsernewtabsearch", "")); return r }
+            if (sameTabWord) { r.text = t(lang, "Reusing current tab.", "Isi tab mein khol raha hoon."); r.actions.add(BrainAction("browsersametabsearch", "")); return r }
         }
 
         // ---------- 8) SAVE contact (naam + number + relation, multilingual) ----------

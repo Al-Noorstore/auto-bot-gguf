@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Auto Bot GGUF</string>
+    <string name="accessibility_desc">Auto Bot ko screen ka text padhne aur automation tasks karne ke liye access deta hai. Sirf aap ke kehne par kaam karta hai.</string>
 </resources>

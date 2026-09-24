@@ -110,7 +110,9 @@
 
   /* v3.1: copy buttons, history, toast */
   .msg.bot .bcol { display: flex; flex-direction: column; max-width: 95%; }
+  .msg.user .bcol { display: flex; flex-direction: column; align-items: flex-end; max-width: 85%; }
   .copyrow { display: flex; gap: 8px; margin-top: 2px; }
+  .msg.user .copyrow { justify-content: flex-end; }
   .copybtn { background: none; border: none; color: var(--muted); font-size: 12px; cursor: pointer; padding: 4px 8px; border-radius: 8px; display: inline-flex; align-items: center; gap: 5px; }
   .copybtn:hover { background: var(--hov); color: var(--text); }
   #toast { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); background: var(--panel); color: var(--text); border: 1px solid var(--border); padding: 8px 18px; border-radius: 20px; font-size: 13px; z-index: 99; opacity: 0; transition: opacity .25s; pointer-events: none; }
@@ -157,6 +159,7 @@
     <button class="nav-item" data-view="buyers" onclick="showView('buyers')"><span class="nav-ico">🔎</span> Find Buyers</button>
     <button class="nav-item" data-view="rules" onclick="showView('rules')"><span class="nav-ico">📜</span> Rules</button>
     <button class="nav-item" data-view="memory" onclick="showView('memory')"><span class="nav-ico">🧠</span> Memory</button>
+    <button class="nav-item" data-view="access" onclick="showView('access')"><span class="nav-ico">♿</span> Accessibility</button>
     <button class="nav-item" onclick="toggleTheme()"><span class="nav-ico" id="theme-ico">🌙</span> <span id="theme-label">Dark mode</span></button>
   </nav>
   <div class="side-bot" id="side-bot">Auto Bot <span id="app-ver">v3.1</span> · e-commerce automation<br>Developed by Mr Wishal Noor 👑</div>
@@ -240,6 +243,24 @@
       <ul class="list" id="m-list" style="margin-top:14px"></ul>
     </div>
 
+    <div class="panel" id="p-access">
+      <h2>♿ Accessibility</h2>
+      <div class="empty-note">Screen padhne + aage automation ke liye. Auto Bot khud on nahi kar sakta — aap ek baar allow karo, phir jo bhi task accessibility maangta hai main khud kar dunga.</div>
+      <div style="margin:12px 0;padding:12px;border-radius:12px" id="acc-status">⏳ Status check ho raha hai...</div>
+      <button class="go" onclick="openAccSettings()">Accessibility Settings kholo</button>
+      <div style="margin-top:16px;font-size:13px;color:var(--muted);line-height:1.7">
+        <b>On karne ke steps:</b><br>
+        1. Phone <b>Settings</b> kholo<br>
+        2. <b>Accessibility</b> tap karo<br>
+        3. <b>Auto Bot</b> dhoondo aur tap karo<br>
+        4. <b>On</b> kar ke Allow press karo<br><br>
+        <b>On hone ke baad ye hoga:</b><br>
+        • Chat mein "screen parho" — main har app ka text padh kar bata dunga<br>
+        • Aage: dosri apps mein auto click/scroll automation<br>
+        • Jo tasks accessibility ke bina na ho saken, main chat mein khud bata dunga ke on karo
+      </div>
+    </div>
+
     <div class="panel" id="p-history">
       <h2>🗂️ Chat History</h2>
       <div class="empty-note">Kisi bhi chat par tap karo — wahi se continue hoga. ✕ se delete.</div>
@@ -253,7 +274,6 @@
       <input type="file" id="file" style="display:none" onchange="filePick(this)">
       <button class="ibtn" id="plus" onclick="document.getElementById('file').click()" title="Upload">+</button>
       <textarea id="msg" rows="1" placeholder="Message Auto Bot"></textarea>
-      <button class="ibtn" id="copyprompt" onclick="copyPrompt()" title="Copy prompt">⧉</button>
       <button class="ibtn" id="mic" onclick="micToggle()" title="Voice input">🎤</button>
       <button id="send" disabled onclick="send()" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
     </div>
@@ -296,6 +316,7 @@ function showView(v) {
   if (v === 'rules') loadRules();
   if (v === 'memory') loadMemory();
   if (v === 'history') loadHistory();
+  if (v === 'access') loadAccess();
 }
 let curChat = null;
 function chatsAll() { try { return JSON.parse(localStorage.getItem('ab_chats') || '[]'); } catch (e) { return []; } }
@@ -343,6 +364,24 @@ function loadHistory() {
     el.appendChild(d);
   });
 }
+function loadAccess() {
+  var el = $('acc-status'); if (!el) return;
+  try {
+    if (window.AutoBotNative && AutoBotNative.isAccessibilityOn) {
+      var on = AutoBotNative.isAccessibilityOn();
+      el.textContent = on ? '✅ Accessibility ON — Auto Bot screen padh sakta hai. Chat mein "screen parho" try karo.' : '❌ Accessibility OFF — neeche steps se on karo.';
+      el.style.background = on ? 'rgba(16,163,127,.15)' : 'rgba(239,65,70,.13)';
+    } else {
+      el.textContent = 'ℹ️ Accessibility sirf Android app mein kaam karta hai (ye browser preview hai).';
+      el.style.background = 'var(--panel)';
+    }
+  } catch (e) { el.textContent = 'ℹ️ Status nahi mila.'; }
+}
+function openAccSettings() {
+  try { if (window.AutoBotNative && AutoBotNative.openAccessibilitySettings) { AutoBotNative.openAccessibilitySettings(); return; } } catch (e) {}
+  toast('App mein: Settings → Accessibility → Auto Bot');
+}
+
 function newChat() { curChat = null; chatHist = []; saveChat(); $('msgs').innerHTML = ''; $('empty').style.display = 'flex'; showView('chat'); if (isMobile() && $('sidebar').classList.contains('open')) toggleSidebar(); }
 
 /* ---------- chat ---------- */
@@ -350,7 +389,7 @@ function bubble(role, text) {
   const d = document.createElement('div');
   d.className = 'msg ' + role;
   d.innerHTML = role === 'user'
-    ? '<div class="bubble">' + esc(text) + '</div>'
+    ? '<div class="bcol"><div class="bubble">' + esc(text) + '</div><div class="copyrow"><button class="copybtn" onclick="copyBubble(this)">&#10697; Copy</button></div></div>'
     : '<span class="av">' + LOGO_SVG + '</span><div class="bcol"><div class="bubble">' + esc(text) + '</div><div class="copyrow"><button class="copybtn" onclick="copyBubble(this)">&#10697; Copy</button></div></div>';
   $('msgs').appendChild(d);
   $('view').scrollTop = $('view').scrollHeight;
@@ -396,7 +435,6 @@ function copyText(t) {
     navigator.clipboard.writeText(t).then(() => toast('\u2713 Copied')).catch(() => execCopy(t));
   } else execCopy(t);
 }
-function copyPrompt() { const t = $('msg').value.trim(); if (!t) { toast('Prompt khali hai — kuch likho'); return; } copyText(t); }
 function copyBubble(btn) { const b = btn.closest('.bcol').querySelector('.bubble'); copyText(b.innerText); btn.textContent = '\u2713 Copied'; setTimeout(() => btn.textContent = '\u238B Copy', 1500); }
 function autoGrow() { const t = $('msg'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px'; }
 
@@ -562,12 +600,12 @@ $('msg').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey
     $('typing') && $('typing').remove();
     var d = document.createElement('div');
     d.className = 'msg bot';
-    var html = '<span class="av">' + LOGO_SVG + '</span><div class="bubble">' + esc(t);
+    var html = '<span class="av">' + LOGO_SVG + '</span><div class="bcol"><div class="bubble">' + esc(t);
     (btns || []).forEach(function (b) {
       var col = (b.action === 'endcall') ? '#ef4146' : '#10a37f';
       html += '<div style="margin-top:8px"><button style="background:' + col + ';color:#fff;border:none;border-radius:20px;padding:9px 18px;font-size:14px;font-weight:600;cursor:pointer" onclick="abBtn(this)" data-action="' + esc(b.action) + '" data-phone="' + esc(b.phone || '') + '">' + esc(b.label) + '</button></div>';
     });
-    html += '</div>';
+    html += '</div><div class="copyrow"><button class="copybtn" onclick="copyBubble(this)">&#10697; Copy</button></div></div>';
     d.innerHTML = html;
     $('msgs').appendChild(d);
     $('view').scrollTop = $('view').scrollHeight;

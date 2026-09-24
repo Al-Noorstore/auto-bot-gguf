@@ -112,18 +112,7 @@ class MainActivity : AppCompatActivity() {
                 return _abOriginalSend.apply(this, arguments);
               };
             }
-            // v2.7: online sidebar mein Settings button
-            try {
-              var _sb = document.getElementById('sidebar');
-              if (_sb && window.AutoBotNative && !document.getElementById('ab-settings-btn')) {
-                var _sbB = document.createElement('button');
-                _sbB.id = 'ab-settings-btn';
-                _sbB.className = _sb.querySelector('.nav-item') ? _sb.querySelector('.nav-item').className : 'nav-item';
-                _sbB.innerHTML = '⚙️ Settings';
-                _sbB.onclick = function () { AutoBotNative.openSettings(); };
-                _sb.appendChild(_sbB);
-              }
-            } catch (e) {}
+            // v3.2.1: legacy duplicate-Settings injector removed — bundled UI already adds Terminal/Native Powers/Settings once
             // v2.6 offline-brain buttons (online site pe bhi)
             if (!window.__localBotReplyEx) {
               window.__localBotReplyEx = function (t, btns) {
@@ -1080,6 +1069,15 @@ class MainActivity : AppCompatActivity() {
                         "closeapp" -> Thread { chatReply(closeAppByName(a.arg)) }.start()
                         "youtubesearch" -> runOnUiThread { openUrl("https://www.youtube.com/results?search_query=" + java.net.URLEncoder.encode(a.arg, "UTF-8")) }
                         "browsersearch" -> runOnUiThread { openUrl("https://www.google.com/search?q=" + java.net.URLEncoder.encode(a.arg, "UTF-8")) }
+                        "browsernewtabsearch" -> runOnUiThread {
+                            val url = if (a.arg.isBlank()) "https://www.google.com" else "https://www.google.com/search?q=" + java.net.URLEncoder.encode(a.arg, "UTF-8")
+                            showBrowser(true); webNewTab(url)
+                        }
+                        "browsersametabsearch" -> runOnUiThread {
+                            val url = if (a.arg.isBlank()) "https://www.google.com" else "https://www.google.com/search?q=" + java.net.URLEncoder.encode(a.arg, "UTF-8")
+                            showBrowser(true); val t = webActive(); if (t != null) t.wv.loadUrl(url) else webNewTab(url)
+                        }
+                        "closetab" -> runOnUiThread { if (webActive() != null) webCloseActive() else chatReply("🌐 Koi tab khuli nahi hai.") }
                         "openurl" -> runOnUiThread { openUrl(a.arg) }
                         "torch" -> runOnUiThread { torchSet(true) }
                         "torchoff" -> runOnUiThread { torchSet(false) }
@@ -1212,6 +1210,20 @@ class MainActivity : AppCompatActivity() {
         if (low.startsWith("token delete") || low.startsWith("token hatao")) {
             val name = msg.trim().split(" ").lastOrNull() ?: ""
             chatReply(if (TokenVault.delete(this, name)) "🗑️ Token delete: $name" else "❌ Token nahi mila: $name")
+            return true
+        }
+
+        // ---------- v3.3: ACCESSIBILITY ----------
+        val accSteps = "♿ Accessibility abhi OFF hai. On karne ke steps:\n1. Phone Settings kholo\n2. Accessibility / Accessibility kholo\n3. 'Auto Bot' ya 'Auto Bot Accessibility' tap karo\n4. On kar ke Allow karo\n(Tip: menu mein ♿ Accessibility page se seedha settings khul jayega)\n\nOn hone ke baad wahi task dobara bolo."
+        if (low == "accessibility" || low == "accessibility status" || low == "accessibility on" || low.startsWith("accessibility ")) {
+            val on = AutoBotAccessibilityService.isOn()
+            chatReply(if (on) "♿ Accessibility ON hai — Auto Bot screen padh sakta hai.\nTask do: 'screen parho'" else accSteps)
+            return true
+        }
+        if (low.contains("screen parho") || low.contains("screen padho") || low.contains("read screen") || low.contains("screen text") || low.contains("screen read")) {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            val txt = AutoBotAccessibilityService.readScreen()
+            chatReply(if (txt.isBlank()) "📭 Screen par kuch readable text nahi mila — app khuli honi chahiye." else "📱 Screen text:\n" + txt.take(2500))
             return true
         }
 
@@ -1655,6 +1667,18 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun openSettings() { runOnUiThread { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) } }
+
+        // ---------- v3.3: accessibility bridge ----------
+        @JavascriptInterface
+        fun isAccessibilityOn(): Boolean = AutoBotAccessibilityService.isOn()
+
+        @JavascriptInterface
+        fun openAccessibilitySettings() {
+            runOnUiThread { startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        }
+
+        @JavascriptInterface
+        fun readScreen(): String = AutoBotAccessibilityService.readScreen()
 
         @JavascriptInterface
         fun downloadModel(name: String) {
