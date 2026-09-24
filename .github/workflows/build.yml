@@ -27,22 +27,22 @@ jobs:
       - name: Build AutoBot LITE APK
         run: |
           gradle assembleRelease -PliteBuild=true --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk AutoBot-Lite-v2.8.apk
+          cp app/build/outputs/apk/release/app-release.apk AutoBot-GGUF-Lite-v3.1.apk
 
       # ---------- AutoBot PRO (Python 3.11 inside — zyada RAM wale phone ke liye) ----------
       - name: Build AutoBot PRO APK
         run: |
           gradle clean assembleRelease --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk AutoBot-Pro-v2.8.apk
+          cp app/build/outputs/apk/release/app-release.apk AutoBot-GGUF-Pro-v3.1.apk
 
       - name: Upload LITE APK
         uses: actions/upload-artifact@v4
         with:
           name: AutoBot-LITE-APK
-          path: AutoBot-Lite-v2.8.apk
+          path: AutoBot-GGUF-Lite-v3.1.apk
 
       - name: Upload PRO APK
         uses: actions/upload-artifact@v4
         with:
           name: AutoBot-PRO-APK
-          path: AutoBot-Pro-v2.8.apk
+          path: AutoBot-GGUF-Pro-v3.1.apk
