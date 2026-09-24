@@ -159,7 +159,7 @@
     <button class="nav-item" data-view="memory" onclick="showView('memory')"><span class="nav-ico">🧠</span> Memory</button>
     <button class="nav-item" onclick="toggleTheme()"><span class="nav-ico" id="theme-ico">🌙</span> <span id="theme-label">Dark mode</span></button>
   </nav>
-  <div class="side-bot">Auto Bot v0.3 · e-commerce automation<br>Owner: Mr Wishal · Approvals first 👑</div>
+  <div class="side-bot" id="side-bot">Auto Bot <span id="app-ver">v3.1</span> · e-commerce automation<br>Developed by Mr Wishal Noor 👑</div>
 </aside>
 
 <main id="main">
@@ -585,6 +585,7 @@ $('msg').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey
     el.disabled = true; el.style.opacity = '0.5';
   };
   if (window.AutoBotNative) {
+    try { if (AutoBotNative.getAppVersion) { var _v = AutoBotNative.getAppVersion(); if (_v) $('app-ver').textContent = 'v' + _v.replace('-LITE','').replace('-PRO',''); } } catch (e) {}
     // Native mode banner ab hidden (feature phir bhi active hai, sirf visual notice nahi dikhta)
     document.body.insertAdjacentHTML('afterbegin', '<div style="display:none;background:#0ea5b7;color:#04222a;padding:6px 14px;font-size:12px;font-weight:600;text-align:center">📱 Native mode ON — contacts phone mein save honge</div>');
     var mo = document.getElementById('sidebar');

@@ -1448,6 +1448,10 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun appStatus(): String = "AutoBot " + PyEngine.brand + " (v" + BuildConfig.VERSION_NAME + ") — online: ${isOnline()}"
 
+        // v3.1: sidebar footer real version (auto-updates har build ke saath)
+        @JavascriptInterface
+        fun getAppVersion(): String = BuildConfig.VERSION_NAME
+
         @JavascriptInterface
         fun saveToPhoneBook(name: String, phone: String) {
             runOnUiThread {
