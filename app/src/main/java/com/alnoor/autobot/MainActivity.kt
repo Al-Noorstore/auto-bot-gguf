@@ -263,7 +263,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var termScroll: ScrollView
     private lateinit var termIn: EditText
     // v3.0: terminal TABS — har tab apna session (Termux style)
-    private class TermSession(val id: Int) { val buf = StringBuilder(); var shell: com.topjohnwu.superuser.Shell? = null }
+    private class TermSession(val id: Int) { val buf = StringBuilder(); var cwd: String? = null }
     private val termSessions = ArrayList<TermSession>()
     private var termSeq = 0
     private var termActiveId = -1
@@ -285,7 +285,6 @@ class MainActivity : AppCompatActivity() {
     private fun termCloseSession(id: Int) {
         val idx = termSessions.indexOfFirst { it.id == id }
         if (idx < 0) return
-        try { termSessions[idx].shell?.close() } catch (_: Exception) {}
         termSessions.removeAt(idx)
         if (termSessions.isEmpty()) { termNewSession(); return }
         if (termActiveId == id) termActiveId = termSessions[maxOf(0, idx - 1)].id
@@ -360,23 +359,27 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    // v3.0: har tab ka APNA persistent shell — cd/variables tab ke andar yaad rehte hain (Termux style)
-    private fun sessionShell(sess: TermSession): com.topjohnwu.superuser.Shell? {
-        if (sess.shell != null) return sess.shell
-        return try {
-            val b = com.topjohnwu.superuser.Shell.Builder.create()
-            if (rootAvailable()) b.setFlags(com.topjohnwu.superuser.Shell.FLAG_REDIRECT_STDERR).setTimeout(15)
-            else b.setFlags(com.topjohnwu.superuser.Shell.FLAG_REDIRECT_STDERR or com.topjohnwu.superuser.Shell.FLAG_NON_ROOT_SHELL).setTimeout(15)
-            val sh = b.build()
-            sess.shell = sh
-            sh
-        } catch (e: Exception) { null }
+    // v3.0.1: libsu MAIN shell (Shell.getShell) — libsu ka officially supported persistent shell.
+    // Root mile to root, warna sh. Har command isi ek zinda shell mein chalti hai.
+    private fun shellInit() {
+        try {
+            Shell.setDefaultBuilder(
+                Shell.Builder.create().setTimeout(10)
+            )
+        } catch (_: Exception) {}
     }
 
-    // v3.0: libsu shell engine — root (su) mile to root shell, warna normal sh fallback
-    private fun shellInit() {
-        try { Shell.setDefaultBuilder(Shell.Builder.create().setFlags(Shell.FLAG_REDIRECT_STDERR).setTimeout(15)) } catch (_: Exception) {}
-    }
+    private fun mainShell(): com.topjohnwu.superuser.Shell? = try {
+        Shell.getShell()
+    } catch (e: Exception) { null }
+
+    private fun homeDir(): File = File(getExternalFilesDir(null), "work").apply { mkdirs() }
+
+    // single-quote escape for cd paths
+    private fun shQuote(p: String): String = "'" + p.replace("'", "'\\''") + "'"
+
+    // resolve tab cwd: default = app work dir
+    private fun sessCwd(sess: TermSession): String = sess.cwd ?: homeDir().absolutePath
     private fun rootAvailable(): Boolean = try { Shell.isAppGrantedRoot() == true } catch (e: Exception) { false }
 
     // shell engine: real Android sh, background mein bot bhi use karta hai
@@ -386,7 +389,6 @@ class MainActivity : AppCompatActivity() {
         Thread {
             var out = ""
             try {
-                val cwd = File(getExternalFilesDir(null), "work").apply { mkdirs() }
                 if (cmd.trim().startsWith("py ")) { runPython(cmd.trim().substring(3).removeSurrounding("\""), fromChat); appendTermTo(sess, "$ "); return@Thread }
                 if (cmd.trim().startsWith("pip install ")) { pipInstall(cmd.trim().substring(12), fromChat); appendTermTo(sess, "$ "); return@Thread }
                 if (cmd.trim() == "root" || cmd.trim() == "su" || cmd.trim() == "whoami") {
@@ -394,26 +396,71 @@ class MainActivity : AppCompatActivity() {
                     appendTerm(if (granted) "[ROOT] \u2705 Root MILA \u2014 ab commands root (su) shell se chalenge. Full access!" else "[ROOT] \u274C Root nahi \u2014 normal sh shell (app sandbox). Root commands nahi chalenge.")
                     return@Thread
                 }
-                val sh = sessionShell(sess)
-                if (sh != null) {
-                    try {
-                        val r = sh.newJob().add(cmd).exec()
-                        out = r.out.joinToString("\n").ifBlank { if (r.isSuccess) "(no output, exit ok)" else "(exit ${r.code})" }
-                    } catch (e: Exception) { out = "Error: " + e.message }
+                val cwd = sessCwd(sess)
+                var newCwd: String? = null
+                var toRun = cmd
+                val trimmed = cmd.trim()
+                val isCd = trimmed == "cd" || trimmed.startsWith("cd ")
+                if (trimmed == "diag") {
+                    // shell health check
+                    val sh = mainShell()
+                    val sb = StringBuilder()
+                    sb.append("== SHELL DIAG ==\n")
+                    sb.append("libsu main shell: ").append(if (sh != null) "OK" else "FAIL (ProcessBuilder fallback active)").append("\n")
+                    if (sh != null) {
+                        val st = try { sh.status } catch (e: Exception) { -99 }
+                        sb.append("shell type: ").append(if (st == com.topjohnwu.superuser.Shell.ROOT_SHELL) "ROOT (su)" else if (st == com.topjohnwu.superuser.Shell.NON_ROOT_SHELL) "non-root (sh)" else "unknown($st)").append("\n")
+                        val t1 = Shell.cmd("echo test123").exec()
+                        sb.append("echo test123 -> ").append(t1.out.joinToString(" ").ifBlank { "NO OUTPUT (code ${t1.code})" }).append("\n")
+                        val t2 = Shell.cmd("pwd").exec()
+                        sb.append("pwd -> ").append(t2.out.joinToString(" ").ifBlank { "NO OUTPUT (code ${t2.code})" }).append("\n")
+                        val t3 = Shell.cmd("echo \$PATH").exec()
+                        sb.append("PATH -> ").append(t3.out.joinToString(" ")).append("\n")
+                    }
+                    sb.append("tab cwd: ").append(cwd)
+                    out = sb.toString()
                 } else {
-                val p = ProcessBuilder("sh", "-c", cmd)
-                    .directory(cwd)
-                    .redirectErrorStream(true)
-                    .start()
-                val reader = BufferedReader(InputStreamReader(p.inputStream))
-                val sb = StringBuilder()
-                var line: String? = reader.readLine()
-                var count = 0
-                while (line != null && count < 500) { sb.append(line).append("\n"); line = reader.readLine(); count++ }
-                val done = try { p.waitFor() == 0 } catch (e: Exception) { false }
-                out = sb.toString().ifBlank { "(no output, exit ok)" }
-                reader.close(); p.destroy()
+                    if (isCd) {
+                        val target = trimmed.removePrefix("cd").trim().ifEmpty { homeDir().absolutePath }
+                        toRun = "cd ${shQuote(target)} && echo __PWD__" + "\$(pwd)"
+                    } else if (cwd != homeDir().absolutePath) {
+                        toRun = "cd ${shQuote(cwd)} && { ${cmd}; }"
+                    }
+                    val sh = mainShell()
+                    if (sh != null) {
+                        try {
+                            val r = Shell.cmd(toRun).exec()
+                            var o = r.out.joinToString("\n")
+                            val e = r.err.joinToString("\n")
+                            if (isCd) {
+                                val m = Regex("__PWD__(.*)").findAll(o).lastOrNull()
+                                if (m != null) {
+                                    newCwd = m.groupValues[1]
+                                    o = o.substringBefore("__PWD__").trimEnd()
+                                }
+                            }
+                            out = buildString {
+                                if (o.isNotBlank()) append(o)
+                                if (e.isNotBlank()) append(if (isNotEmpty()) "\n" else "").append(e)
+                                if (isEmpty()) append(if (r.isSuccess) "(no output, exit ok)" else "(exit ${r.code})")
+                            }
+                        } catch (e: Exception) { out = "Error: " + e.message }
+                    } else {
+                        val p = ProcessBuilder("sh", "-c", toRun)
+                            .directory(File(cwd))
+                            .redirectErrorStream(true)
+                            .start()
+                        val reader = BufferedReader(InputStreamReader(p.inputStream))
+                        val sb = StringBuilder()
+                        var line: String? = reader.readLine()
+                        var count = 0
+                        while (line != null && count < 500) { sb.append(line).append("\n"); line = reader.readLine(); count++ }
+                        try { p.waitFor() } catch (e: Exception) {}
+                        out = sb.toString().ifBlank { "(no output)" }
+                        reader.close(); p.destroy()
+                    }
                 }
+                if (isCd && newCwd != null) sess.cwd = newCwd
             } catch (e: Exception) { out = "Error: " + e.message }
             val res = out.trim().take(3000)
             runOnUiThread {
