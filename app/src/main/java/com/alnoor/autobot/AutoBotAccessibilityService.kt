@@ -72,8 +72,11 @@ class AutoBotAccessibilityService : AccessibilityService() {
             val cx = w.widthPixels / 2f
             val y1 = if (down) w.heightPixels * 0.75f else w.heightPixels * 0.25f
             val y2 = if (down) w.heightPixels * 0.25f else w.heightPixels * 0.75f
-            val path = android.accessibilityservice.GestureDescription.StrokeDescription(cx, y1, cx, y2, 220)
-            val ok = svc.dispatchGesture(android.accessibilityservice.GestureDescription.Builder().addStroke(path).build(), null, null)
+            val p = android.graphics.Path()
+            p.moveTo(cx, y1)
+            p.lineTo(cx, y2)
+            val stroke = android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 220)
+            val ok = svc.dispatchGesture(android.accessibilityservice.GestureDescription.Builder().addStroke(stroke).build(), null, null)
             return if (ok) "OK" else "FAIL"
         }
 
