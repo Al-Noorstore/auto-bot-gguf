@@ -1227,7 +1227,57 @@ class MainActivity : AppCompatActivity() {
             return true
         }
 
-        // ---------- v3.0: GITHUB (token se) ----------
+                // ---------- v3.4: accessibility automation (tap/scroll/back/home) ----------
+        val tapTarget = Regex("^tap\\s+(.+?)\\s*(?:karo|kro|do)*\\s*$").find(low)?.groupValues?.get(1)
+            ?: Regex("^(.+?)\\s+(?:ko\\s+)?(?:dabao|daba|click\\s+karo|press\\s+karo)\\s*(?:karo|kro|do|de)*\\s*$").find(low)?.groupValues?.get(1)?.takeIf { low.contains("dabao") || low.contains("daba ") || low.contains("click karo") || low.contains("press karo") }
+        if (tapTarget != null && !low.contains("call")) {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            val res = AutoBotAccessibilityService.tapText(tapTarget)
+            chatReply(when (res) {
+                "OK" -> "👆 Tap ho gaya: $tapTarget"
+                "NOT_FOUND" -> "❌ Screen par '$tapTarget' nahi mila. 'screen parho' se dekho kya likha hai."
+                "NOT_CLICKABLE" -> "❌ '$tapTarget' tap-able nahi hai."
+                "NO_WINDOW" -> "❌ Koi app khuli nahi lag rahi."
+                else -> "❌ Tap fail: " + res
+            })
+            return true
+        }
+        if (low.startsWith("scroll") || low.contains("scroll karo") || low.contains("scroll kar")) {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            val up = low.contains("up") || low.contains("upar") || low.contains("wapis") || low.contains("peeche")
+            val res = AutoBotAccessibilityService.scroll(!up)
+            chatReply(if (res == "OK") "👇/👆 Scroll " + (if (up) "up" else "down") + " ho gaya." else "❌ Scroll fail: $res")
+            return true
+        }
+        if (low == "back" || low.contains("back jao") || low.contains("wapis jao") || low.contains("peeche jao")) {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            chatReply(if (AutoBotAccessibilityService.goBack() == "OK") "⬅️ Wapis." else "❌ Back fail.")
+            return true
+        }
+        if (low == "home" || low.contains("home jao") || low.contains("home screen")) {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            chatReply(if (AutoBotAccessibilityService.goHome() == "OK") "🏠 Home." else "❌ Home fail.")
+            return true
+        }
+        // ---------- v3.4: chrome mein direct kholo ----------
+        val chromeM = Regex("^\\s*chrome\\s+(.+?)\\s*(?:kholo|khol|karo|kro|do)*\\s*$").find(low)?.groupValues?.get(1)
+        if (chromeM != null) {
+            val q = chromeM.trim()
+            if (q.isNotBlank() && q !in setOf("kholo", "khol", "karo", "open", "band")) {
+                val url = if (q.startsWith("http") || q.contains(".") && !q.contains(" ")) q
+                           else "https://www.google.com/search?q=" + java.net.URLEncoder.encode(q, "UTF-8")
+                try {
+                    val it2 = Intent(Intent.ACTION_VIEW, Uri.parse(if (url.startsWith("http")) url else "https://$url"))
+                    it2.setPackage("com.android.chrome")
+                    it2.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(it2)
+                    chatReply("🌐 Chrome mein khul gaya: $q")
+                } catch (e: Exception) { openUrl("https://www.google.com/search?q=" + java.net.URLEncoder.encode(q, "UTF-8")); chatReply("🌐 Chrome nahi mila — default browser mein search khol diya: $q") }
+                return true
+            }
+        }
+
+// ---------- v3.0: GITHUB (token se) ----------
         if (low == "github" || low.startsWith("github ")) {
             val token = TokenVault.get(this, "github")
             if (token == null) { chatReply("🔑 GitHub token nahi hai. Pehle:\ntoken save github <aap-ka-personal-access-token>\n(token GitHub → Settings → Developer settings → Personal access tokens se milta hai)"); return true }
