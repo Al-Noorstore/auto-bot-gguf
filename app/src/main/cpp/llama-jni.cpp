@@ -2,6 +2,7 @@
 // llama.cpp v0.5.0 C API se model load + generate
 #include <jni.h>
 #include <android/log.h>
+#include <cstring>
 #include <string>
 #include <vector>
 #include <thread>
@@ -56,45 +57,47 @@ Java_com_alnoor_autobot_LlamaBridge_nativeGenerate(JNIEnv *env, jobject,
         jstring jprompt, jint maxTokens, jfloat temp, jfloat topP, jint topK) {
     if (!g_model || !g_ctx) return env->NewStringUTF("");
 
+    const llama_vocab *vocab = llama_model_get_vocab(g_model);
+
     const char *pc = env->GetStringUTFChars(jprompt, nullptr);
     std::string prompt(pc);
     env->ReleaseStringUTFChars(jprompt, pc);
 
     // ---- tokenize prompt (add_special=true, parse_special=true) ----
-    int32_t n_prompt = llama_tokenize(g_model, prompt.c_str(), (int32_t) prompt.size(), nullptr, 0, true, true);
+    int32_t n_prompt = llama_tokenize(vocab, prompt.c_str(), (int32_t) prompt.size(), nullptr, 0, true, true);
     if (n_prompt < 0) return env->NewStringUTF("");
     std::vector<llama_token> toks((size_t) n_prompt);
-    if (llama_tokenize(g_model, prompt.c_str(), (int32_t) prompt.size(), toks.data(), (int32_t) toks.size(), true, true) < 0)
+    if (llama_tokenize(vocab, prompt.c_str(), (int32_t) prompt.size(), toks.data(), (int32_t) toks.size(), true, true) < 0)
         return env->NewStringUTF("");
     LOGI("prompt tokens: %d", n_prompt);
 
-    // ---- stop token: <|im_end|> (Qwen) + EOS ----
+    // ---- stop token: <|im_end|> (Qwen) + EOG ----
     llama_token im_end = -1;
     const char *stop_str = "<|im_end|>";
     llama_token st[8];
-    int32_t nst = llama_tokenize(g_model, stop_str, (int32_t) strlen(stop_str), st, 8, false, true);
+    int32_t nst = llama_tokenize(vocab, stop_str, (int32_t) strlen(stop_str), st, 8, false, true);
     if (nst == 1) im_end = st[0];
-    llama_token eos = llama_token_eos(g_model);
+    llama_token eos = llama_vocab_eos(vocab);
 
     // ---- sampler chain ----
     llama_sampler *smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
     if (topK > 0) llama_sampler_chain_add(smpl, llama_sampler_init_top_k(topK));
-    if (topP > 0 && topP < 1.0f) llama_sampler_chain_add(smpl, llama_sampler_init_top_p(topP, 0.95f, 40));
+    if (topP > 0 && topP < 1.0f) llama_sampler_chain_add(smpl, llama_sampler_init_top_p(topP, 1));
     if (temp > 0.05f) llama_sampler_chain_add(smpl, llama_sampler_init_temp(temp));
     llama_sampler_chain_add(smpl, llama_sampler_init_dist(0));
 
     // ---- generate ----
     std::string out;
-    llama_batch batch = llama_batch_get_one(toks.data(), (int32_t) toks.size(), 0, 0);
+    llama_batch batch = llama_batch_get_one(toks.data(), (int32_t) toks.size());
     if (maxTokens < 16) maxTokens = 128;
     for (int i = 0; i < maxTokens; i++) {
         if (llama_decode(g_ctx, batch) != 0) { LOGI("decode failed"); break; }
         llama_token id = llama_sampler_sample(smpl, g_ctx, -1);
-        if (id == eos || (im_end >= 0 && id == im_end)) break;
+        if (id == eos || (im_end >= 0 && id == im_end) || llama_vocab_is_eog(vocab, id)) break;
         char piece[64];
-        int pn = llama_token_to_piece(g_model, id, piece, sizeof(piece), 0, true);
+        int pn = llama_token_to_piece(vocab, id, piece, sizeof(piece), 0, true);
         if (pn > 0) out.append(piece, (size_t) pn);
-        batch = llama_batch_get_one(&id, 1, -1, 0);
+        batch = llama_batch_get_one(&id, 1);
     }
     llama_sampler_free(smpl);
     LOGI("generated %d chars", (int) out.size());
