@@ -23,26 +23,39 @@ jobs:
       - name: Decode signing keystore
         run: echo "${{ secrets.AUTOBOT_KEYSTORE_B64 }}" | base64 -d > autobot.p12
 
+      # ---------- v3.5 GGUF ENGINE: llama.cpp v0.5.0 (pinned) ----------
+      - name: Fetch llama.cpp v0.5.0
+        run: |
+          git clone --depth 1 --branch v0.5.0 https://github.com/ggml-org/llama.cpp app/src/main/cpp/llama.cpp
+          echo "llama.cpp $(git -C app/src/main/cpp/llama.cpp describe --tags) ready"
+
+      - name: Bundle Qwen2.5-0.5B model (PRO asset)
+        run: |
+          mkdir -p app/src/pro/assets/models
+          curl -L --fail --retry 3 -o app/src/pro/assets/models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+            https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
+          ls -la app/src/pro/assets/models/
+
       # ---------- AutoBot LITE (no Python — chhota, low-RAM safe, default) ----------
       - name: Build AutoBot LITE APK
         run: |
           gradle assembleRelease -PliteBuild=true --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk AutoBot-GGUF-Lite-v3.1.apk
+          cp app/build/outputs/apk/release/app-release.apk AutoBot-GGUF-Lite-v3.5.apk
 
       # ---------- AutoBot PRO (Python 3.11 inside — zyada RAM wale phone ke liye) ----------
       - name: Build AutoBot PRO APK
         run: |
           gradle clean assembleRelease --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk AutoBot-GGUF-Pro-v3.1.apk
+          cp app/build/outputs/apk/release/app-release.apk AutoBot-GGUF-Pro-v3.5.apk
 
       - name: Upload LITE APK
         uses: actions/upload-artifact@v4
         with:
           name: AutoBot-LITE-APK
-          path: AutoBot-GGUF-Lite-v3.1.apk
+          path: AutoBot-GGUF-Lite-v3.5.apk
 
       - name: Upload PRO APK
         uses: actions/upload-artifact@v4
         with:
           name: AutoBot-PRO-APK
-          path: AutoBot-GGUF-Pro-v3.1.apk
+          path: AutoBot-GGUF-Pro-v3.5.apk

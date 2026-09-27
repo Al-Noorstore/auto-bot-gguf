@@ -1176,6 +1176,13 @@ class MainActivity : AppCompatActivity() {
             }
             return true
         }
+        // v3.5 GGUF ENGINE commands
+        if (low == "gguf status" || low == "engine status" || low == "gguf" || low == "engine") {
+            Thread { val st = GgufEngine.status(this); runOnUiThread { appendTerm(st) } }.start(); return true
+        }
+        if (low == "gguf on" || low == "engine on") { GgufEngine.setEnabled(this, true); chatReply("🧠 GGUF engine ON — offline 'ask' ab GGUF se chalega (model ho to)."); return true }
+        if (low == "gguf off" || low == "engine off") { GgufEngine.setEnabled(this, false); chatReply("⚪ GGUF engine OFF — ab API keys use hongi."); return true }
+        if (low == "gguf unload" || low == "engine unload") { Thread { GgufEngine.unload() }.start(); chatReply("🧠 Model memory se free hua. Agli baar 'ask' par dobara load hoga."); return true }
         if (low == "keys" || low == "key list") { appendTerm(KeyStore.load(this).joinToString("\n") { (if (it.active) "🟢 " else "⚪ ") + it.label + " [" + it.provider + "]" }.ifBlank { "❌ Koi key nahi — 'admin' likho aur key add karo." }); return true }
         if (low == "terminal" || low == "open terminal") { runOnUiThread { showTerminal(true) }; chatReply("🖥 Terminal khul gaya — screen pe command likho."); return true }
         if (low.contains("full storage") || low.contains("storage full") || low.contains("sab files") || low.contains("all files")) {

@@ -73,6 +73,8 @@ object AIBrain {
      * natural reply: API key connect karo ya Ollama offline model; agar model connected hai to batado.
      */
     fun ask(ctx: Context, question: String): String {
+        // v3.5 GGUF ENGINE: offline model (built-in Qwen ya downloaded) sabse pehle
+        try { GgufEngine.ask(ctx, question)?.let { return it } } catch (e: Throwable) {}
         val keys = KeyStore.load(ctx).filter { it.enabled && it.key.isNotBlank() }
         val active = keys.firstOrNull { it.active } ?: keys.firstOrNull()
         if (active != null) {
@@ -105,8 +107,8 @@ object AIBrain {
         sb.append(if (hasAnyKey) "🧠 AI se jawab nahi mil paya — key ka credit khatam / key ghalat ho sakti hai, ya internet band hai.\n\n"
                   else "🧠 Is sawal ke liye AI chahiye, aur abhi koi API key connect nahi hai.\n\n")
         sb.append("⚡ Sabse aasan fix — chat mein likho:\n   api key <apni-key>\n(Gemini / OpenAI / Groq / OpenRouter khud pehchan lunga; free Gemini key: aistudio.google.com/apikey)\n")
-        if (off != null) sb.append("\n📦 Offline model ($off) select hai, lekin abhi app mein model chalane wala engine nahi — filhal key best hai.")
-        else sb.append("\n📦 Offline model chahiye? Likho: transformer download (phone ke hisaab se suggest karunga).")
+        sb.append("\n🧠 GGUF engine: ${if (GgufEngine.enabled(ctx)) "ON hai lekin model nahi mila" else "OFF hai ('gguf on' likho)"} — PRO APK mein Qwen built-in hai.")
+        if (off != null) sb.append("\n📦 Offline model ($off) select hai.")
         sb.append("\n\n✅ Tab tak local commands chalte hain: open youtube, call, contact, torch, volume… ('help' likho).")
         return sb.toString()
     }

@@ -13,22 +13,33 @@ if (!isLite) {
 android {
     namespace 'com.alnoor.autobot'
     compileSdk 34
+    ndkVersion "27.0.12077973"
 
     defaultConfig {
         // LITE purane app ki jagah lagta hai; PRO alag app "Auto Bot Pro" ke roop mein
         applicationId isLite ? "com.alnoor.autobot" : "com.alnoor.autobot.pro"
         minSdk 24
         targetSdk 34
-        versionCode 35
-        versionName isLite ? "3.4-LITE" : "3.4-PRO"
+        versionCode 36
+        versionName isLite ? "3.5-LITE" : "3.5-PRO"
         ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
         resValue "string", "app_label", isLite ? "Auto Bot" : "Auto Bot Pro"
+
+        // v3.5 GGUF engine: llama.cpp (source CI mein app/src/main/cpp/llama.cpp par aata hai)
+        externalNativeBuild {
+            cmake {
+                cppFlags "-std=c++17 -O3"
+                arguments "-DANDROID_STL=c++_static"
+            }
+        }
     }
 
     sourceSets {
         main {
             // LITE: stub PyEngine (no Python) | PRO: asli PyEngine (Chaquopy)
             java.srcDirs += isLite ? 'src/nopy/kotlin' : 'src/py/kotlin'
+            // PRO mein built-in Qwen model asset (src/pro/assets) — LITE mein nahi
+            assets.srcDirs = isLite ? ['src/main/assets'] : ['src/main/assets', 'src/pro/assets']
         }
     }
 
@@ -58,6 +69,8 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { buildConfig true }
+    externalNativeBuild { cmake { path "src/main/cpp/CMakeLists.txt"; version "3.22.1" } }
+    androidResources { noCompress 'gguf' }
 }
 
 if (!isLite) {
