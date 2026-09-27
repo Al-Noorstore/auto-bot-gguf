@@ -1,2 +1,5 @@
 app/src/main/cpp/llama.cpp/
 app/src/pro/assets/models/*.gguf
+v35/
+*.apk
+*.zip

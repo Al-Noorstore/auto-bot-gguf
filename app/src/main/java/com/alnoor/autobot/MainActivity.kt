@@ -1137,26 +1137,8 @@ class MainActivity : AppCompatActivity() {
         if (low == "mic off" || low == "voice off" || low == "mic stop" || low == "voice stop" || low == "bas" || low == "chup") { runOnUiThread { voiceStopAll() }; chatReply("🎤 Voice band."); return true }
         if (low.startsWith("ask ")) {
             val q = msg.substring(4).trim()
-            if (q.isBlank()) { chatReply("Sawal likho: ask <sawal>"); return true }
-            chatReply("🤖 Soch raha hoon...")
-            Thread {
-                val ans = AIBrain.ask(this, q)
-                runOnUiThread {
-                    chatReply(ans)
-                    // v3.0 Command Bridge: AI ke jawab mein sh code block ho to terminal pe chala do
-                    try {
-                        val blocks = Regex("```(?:sh|bash|shell)?[ \\t]*\\n([\\s\\S]*?)```").findAll(ans)
-                            .map { it.groupValues[1].trim() }.filter { it.isNotBlank() }.toList()
-                        for (b in blocks) {
-                            val bad = listOf("rm -rf", "m" + "kfs", "dd if=", "> /system")
-                            val danger = bad.any { b.contains(it) }
-                            if (danger) chatReply("⚠️ AI ne ye command di lekin W9 ne nahi chalaya (khatarnak laga):\n$b")
-                            else runShell(b, fromChat = true)
-                        }
-                    } catch (_: Exception) {}
-                }
-            }.start()
-            return true
+            if (q.isBlank()) { chatReply("Sawal likho: ask <sawal>  (ya seedha sawal likho — 'ask' ki zarurat nahi)"); return true }
+            aiAnswer(q); return true
         }
         if (low.startsWith("transformer")) {
             val rest = low.removePrefix("transformer").trim()
@@ -1625,7 +1607,34 @@ class MainActivity : AppCompatActivity() {
         }
         if (low.startsWith("mkdir ")) { runShell("mkdir -p " + msg.substring(6).trim(), fromChat = true); chatReply("📁 Folder ban raha hai..."); return true }
         if (low.startsWith("file ")) { runShell("touch " + msg.substring(5).trim(), fromChat = true); chatReply("📄 File ban rahi hai..."); return true }
+
+        // ---------- v3.6 DIRECT AI: koi command match nahi hua + AI available ----------
+        // 'ask' likhne ki zarurat nahi — user seedha koi bhi sawal/baat likhe, Qwen samajh lega.
+        val dq = msg.trim()
+        if (dq.length >= 2 && AIBrain.aiAvailable(this)) { aiAnswer(dq); return true }
         return false
+    }
+
+    /** v3.6: AI jawab (GGUF offline sabse pehle) — 'ask' aur direct-chat dono isi se */
+    private fun aiAnswer(q: String) {
+        chatReply("🤖 Soch raha hoon...")
+        Thread {
+            val ans = AIBrain.ask(this, q)
+            runOnUiThread {
+                chatReply(ans)
+                // v3.0 Command Bridge: AI ke jawab mein sh code block ho to terminal pe chala do
+                try {
+                    val blocks = Regex("```(?:sh|bash|shell)?[ \\t]*\\n([\\s\\S]*?)```").findAll(ans)
+                        .map { it.groupValues[1].trim() }.filter { it.isNotBlank() }.toList()
+                    for (b in blocks) {
+                        val bad = listOf("rm -rf", "m" + "kfs", "dd if=", "> /system")
+                        val danger = bad.any { b.contains(it) }
+                        if (danger) chatReply("⚠️ AI ne ye command di lekin W9 ne nahi chalaya (khatarnak laga):\n$b")
+                        else runShell(b, fromChat = true)
+                    }
+                } catch (_: Exception) {}
+            }
+        }.start()
     }
 
     override fun onBackPressed() {

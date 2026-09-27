@@ -72,6 +72,12 @@ object AIBrain {
      * 1) Active key se try → 2) baaki ON keys se try → 3) sab fail (credit/invalid/off) →
      * natural reply: API key connect karo ya Ollama offline model; agar model connected hai to batado.
      */
+    /** v3.6: kya AI jawab de sakti hai? (GGUF model ya koi API key) — direct-chat ke liye */
+    fun aiAvailable(ctx: Context): Boolean {
+        try { if (GgufEngine.enabled(ctx) && LlamaBridge.available && GgufEngine.modelPresent(ctx)) return true } catch (_: Exception) {}
+        return try { KeyStore.load(ctx).any { it.enabled && it.key.isNotBlank() } } catch (_: Exception) { false }
+    }
+
     fun ask(ctx: Context, question: String): String {
         // v3.5 GGUF ENGINE: offline model (built-in Qwen ya downloaded) sabse pehle
         try { GgufEngine.ask(ctx, question)?.let { return it } } catch (e: Throwable) {}

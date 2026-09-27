@@ -56,6 +56,12 @@ object GgufEngine {
         return null
     }
 
+    /** model maujood hai? (light check — extract nahi karta) */
+    fun modelPresent(ctx: Context): Boolean {
+        try { ctx.assets.open(ASSET_MODEL).close(); return true } catch (_: Exception) {}
+        return try { ModelStore.downloaded(ctx).isNotEmpty() } catch (_: Exception) { false }
+    }
+
     /** model ready hai? (chat status ke liye) */
     fun status(ctx: Context): String {
         val sb = StringBuilder("🧠 GGUF Engine v1 (llama.cpp 0.5.0):\n")
@@ -66,7 +72,7 @@ object GgufEngine {
         val dl = ModelStore.downloaded(ctx)
         sb.append("   Downloaded models: ${if (dl.isEmpty()) "— koi nahi" else dl.joinToString()} \n")
         sb.append(if (loadedPath != null) "   🟢 Model loaded: ${File(loadedPath!!).name}\n" else "   ⚪ Model load nahi (pehle 'ask' par khud load hoga)\n")
-        sb.append("💡 'ask <sawal>' offline chalega jab tak model maujood hai.")
+        sb.append("💡 Ab 'ask' ki zarurat nahi — seedha koi bhi sawal likho, main samajh jaunga.")
         return sb.toString()
     }
 
