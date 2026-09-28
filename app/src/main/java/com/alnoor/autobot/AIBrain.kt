@@ -79,18 +79,40 @@ object AIBrain {
     }
 
     fun ask(ctx: Context, question: String): String {
-        // v3.5 GGUF ENGINE: offline model (built-in Qwen ya downloaded) sabse pehle
-        try { GgufEngine.ask(ctx, question)?.let { return it } } catch (e: Throwable) {}
+        // v3.8 SMART ROUTE (user ke rules):
+        // auto: API key ho to API pehle → na chale to Qwen → na chale to suggestion
+        // qwen: sirf offline Qwen (user ne "qwen se jawab do" kaha ho)
+        // api:  sirf API keys (user ne "api se jawab do" kaha ho)
+        val route = try { ctx.getSharedPreferences("autobot", Context.MODE_PRIVATE).getString("ai_route", "auto") ?: "auto" } catch (_: Exception) { "auto" }
         val keys = KeyStore.load(ctx).filter { it.enabled && it.key.isNotBlank() }
         val active = keys.firstOrNull { it.active } ?: keys.firstOrNull()
-        if (active != null) {
+        fun askApi(): String? {
+            if (active == null) return null
             tryAsk(active, question)?.let { return it }
             for (k in keys) {
                 if (k.label == active.label) continue
                 tryAsk(k, question)?.let { return "(🔑 $k.label se aaya — active key kaam nahi kar rahi thi)\n$it" }
             }
+            return null
         }
-        return failReply(ctx, question)
+        when (route) {
+            "qwen" -> {
+                try { GgufEngine.ask(ctx, question)?.let { return it } } catch (e: Throwable) {}
+                return "🧠 Qwen offline jawab nahi bana paya. 'gguf test' chalao." +
+                    (if (active == null) "\n\n💡 Free Gemini key add karo: api key <key>\n(aistudio.google.com/apikey)" else "\n\n💡 API se jawab ke liye likho: api se jawab do")
+            }
+            "api" -> {
+                askApi()?.let { return it }
+                return "🔑 API se jawab nahi aaya (key invalid / internet band / credit khatam?).\n🔍 'api key test' chalao." +
+                    "\n\n💡 Offline Qwen ke liye likho: qwen se jawab do"
+            }
+            else -> {
+                // AUTO: API pehle (key connect ho), warna Qwen, warna dono fail
+                askApi()?.let { return it }
+                try { GgufEngine.ask(ctx, question)?.let { return it } } catch (e: Throwable) {}
+                return failReply(ctx, question)
+            }
+        }
     }
 
     private fun tryAsk(k: KeyStore.ApiKey, q: String): String? {

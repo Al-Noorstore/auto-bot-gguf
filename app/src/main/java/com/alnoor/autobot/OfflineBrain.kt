@@ -323,12 +323,26 @@ object OfflineBrain {
     // ================= PARSING HELPERS =================
 
     /** Phone number normalize: 00XX → +XX, 10-12 digit → +XX */
+    /**
+     * v3.8: number ko sahi dial-format mein badlo — operator kabhi "wrong number" na kahe.
+     * "03074626716" → "+923074626716" | "+03074626716" (ghalat +) → "+923074626716"
+     * "+923074626716" → as-is | "923074626716" → "+923074626716" | "+1415..." (foreign) → as-is
+     */
     fun normalizePhone(p: String): String {
         var n = p.trim().replace(Regex("[^\\d+]"), "")
-        if (n.startsWith("00")) n = "+" + n.substring(2)
-        if (n.startsWith("+")) return n
-        if (n.length in 10..12) return "+$n"
-        return n
+        if (n.startsWith("00")) n = "+" + n.substring(2)          // 00 → international prefix
+        val hadPlus = n.startsWith("+")
+        var d = n.removePrefix("+")
+        if (hadPlus && d.startsWith("0")) d = d.substring(1)      // "+0307..." ghalat plus — trunk 0 tha
+        else if (hadPlus) return "+$d"                             // valid e164 (+92…, +1…, +44…)
+        // local PK number: trunk 0 ke saath (0307…) ya bina (307…) ya CC ke saath (92307…)
+        if (d.startsWith("92") && d.length == 12) return "+$d"
+        d = d.trimStart('0')                                      // trunk 0 hatao
+        return when (d.length) {
+            12 -> "+$d"                                           // 92xxxxxxxxxx
+            10, 11 -> "+92$d"                                     // PK mobile (3xx…)
+            else -> if (d.length >= 8) "0$d" else d               // landline/short — jaisa hai
+        }
     }
 
     fun extractPhone(text: String): String? {

@@ -671,7 +671,7 @@ class MainActivity : AppCompatActivity() {
             else -> {
                 val keyTok = rest.firstOrNull { it.length >= 16 }
                 if (keyTok == null) {
-                    chatReply("🔑 Key connect karne ke liye key paste karo:\n• api key <key>   (Gemini/OpenAI/Groq/OpenRouter khud pehchan lunga)\n• ya: api key gemini <key>\n• Free Gemini key: aistudio.google.com/apikey\n\nSettings → API Keys se bhi add kar sakte ho.")
+                    chatReply("🔑 Key connect karne ke liye key paste karo:\n• api key <key>   (Gemini/OpenAI/Groq/OpenRouter khud pehchan lunga)\n• ya: api key gemini <key>\n• model bhi: api key gemini 2.5 flash <key>\n• Free Gemini key: aistudio.google.com/apikey\n\nKey aur naam ek sath bhi chalega — sab pehchan lunga. Key save hote hi foran test hoti hai (real-time).")
                     return
                 }
                 val wordProv = rest.firstNotNullOfOrNull { w ->
@@ -685,11 +685,22 @@ class MainActivity : AppCompatActivity() {
                     else -> null
                 }
                 if (provider == null) { chatReply("❓ Provider samajh nahi aaya. Likho: api key gemini <key>\nOptions: " + KeyStore.providers.joinToString(", ")); return }
+                // v3.8: model naam bhi message mein ho to pehchan lo
+                // "api key gemini 2.5 flash AIza..." → model gemini-2.5-flash
+                // "api key openrouter google/gemini-2.0-flash-001 sk-or-..." → model google/gemini-2.0-flash-001
+                val provPrefix = provider.lowercase().replace(" ", "")
+                val filler = Regex("^(key|apikey|api-key|add|karo|kro|krdo|kardo|please|hai|ye|this|is|wali|model|naam)$")
+                val modelWords = rest.filter { w -> w !== keyTok && w.length >= 2 && !w.lowercase().startsWith(provPrefix.substringBefore(' ')) && !filler.containsMatchIn(w.lowercase()) }
+                val model = when {
+                    modelWords.any { it.contains("/") || (it.contains("-") && it.length > 6) } -> modelWords.first { it.contains("/") || (it.contains("-") && it.length > 6) }
+                    modelWords.isNotEmpty() -> provPrefix.split(" ")[0] + "-" + modelWords.joinToString("-") { it.lowercase() }
+                    else -> KeyStore.defaultModel(provider)
+                }
                 val label = provider.split(" ")[0] + "-" + keyTok.takeLast(4)
-                val k = KeyStore.ApiKey(provider, label, keyTok, KeyStore.defaultBase(provider), KeyStore.defaultModel(provider))
+                val k = KeyStore.ApiKey(provider, label, keyTok, KeyStore.defaultBase(provider), model)
                 // chat history mein poori key na rahe
                 runOnUiThread { try { webView.evaluateJavascript("window.__lastLocalMsg='api key " + provider + " ****" + keyTok.takeLast(4) + "'", null) } catch (_: Exception) {} }
-                chatReply(KeyStore.add(this, k) + "\n🔍 Test kar raha hoon...")
+                chatReply(KeyStore.add(this, k) + "\n🤖 Model: $model\n🔍 Foran test kar raha hoon (real-time)...")
                 Thread { chatReply("🔑 $label: " + AIBrain.testKey(k) + "\nAb koi bhi sawal likho ya 'ask <sawal>' — AI jawab dega.") }.start()
             }
         }
@@ -1058,6 +1069,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun runCommand(low: String, msg: String): Boolean {
+        // ---------- v3.8: AI ROUTE — brain se PEHLE (taake "qwen se jawab do" download-intent mein na fas jaye) ----------
+        val isKeyCmd = low.startsWith("api key") || low.startsWith("apikey") || low.startsWith("api-key") || low.startsWith("key add") || low.startsWith("api keys")
+        if (!isKeyCmd) {
+            val neg = Regex("\\b(mat|nahi|na|band|off|hatao)\\b").containsMatchIn(low)
+            val wantApi = !neg && Regex("\\b(api|apikey|api\\s*key|online)\\b").containsMatchIn(low) && Regex("\\b(jawab|jawabo|answer|reply|baat|use)\\b").containsMatchIn(low)
+            val wantQwen = (Regex("\\b(qwen|gguf|offline|local)\\b").containsMatchIn(low) && Regex("\\b(jawab|answer|reply|baat|use)\\b").containsMatchIn(low) && !neg) ||
+                (Regex("\\bapi\\b").containsMatchIn(low) && neg && Regex("\\b(jawab|answer|reply|baat)\\b").containsMatchIn(low))
+            val wantAuto = Regex("\\b(auto|khud)\\b").containsMatchIn(low) && Regex("\\b(route|mode|decide|jabab|jawab)\\b").containsMatchIn(low)
+            when {
+                wantQwen -> { getSharedPreferences("autobot", Context.MODE_PRIVATE).edit().putString("ai_route", "qwen").apply(); chatReply("🧠 Qwen mode ON — ab jawab offline Qwen se aayenge (API key ignore).\n"+ if (KeyStore.active(this) != null) "(Wapas API ke liye: api se jawab do)" else ""); return true }
+                wantApi -> { getSharedPreferences("autobot", Context.MODE_PRIVATE).edit().putString("ai_route", "api").apply(); chatReply("🔑 API mode ON — ab jawab API key se aayenge.\n(Qwen ke liye: qwen se jawab do | dono ke liye: auto mode)"); return true }
+                wantAuto -> { getSharedPreferences("autobot", Context.MODE_PRIVATE).edit().putString("ai_route", "auto").apply(); chatReply("🤖 Auto mode ON — API key ho to API, warna offline Qwen, warna dono try karunga."); return true }
+            }
+        }
         // ---------- OFFLINE BRAIN (v2.6): bina API key / bina model ke bhi ye commands chalete hain ----------
         try {
             val br = OfflineBrain.parse(this, low, msg)
@@ -1823,12 +1848,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ---------- native powers ----------
-    private fun cleanPhone(): String {
-        var p = inputPhone.text.toString().trim().replace(Regex("[^+\\d]"), "")
-        if (p.startsWith("00")) p = "+" + p.substring(2)
-        if (p.length in 10..12 && !p.startsWith("+")) p = "+$p"
-        return p
-    }
+    private fun cleanPhone(): String = OfflineBrain.normalizePhone(inputPhone.text.toString())
 
     private fun validPhone(): Boolean {
         val p = cleanPhone()
