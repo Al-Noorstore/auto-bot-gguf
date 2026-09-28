@@ -825,6 +825,9 @@ class MainActivity : AppCompatActivity() {
         shellInit()
         super.onCreate(savedInstanceState)
         Thread.setDefaultUncaughtExceptionHandler(CrashLogger(this))
+        // v3.7: STARTUP PRELOAD — GGUF model background mein ready ho jata hai,
+        // tak ke pehla sawal 2-3 min ki silence ke bajaye foran jawab de (LITE par silently skip)
+        Thread { try { GgufEngine.prepare(this) { } } catch (_: Throwable) {} }.start()
         // SAB SE PEHLE: pichle crash ka log dikha do (app crash ho to bhi next launch pe yahan aayenge)
         try {
             val lf = File(getExternalFilesDir(null), "crash_log.txt")
@@ -1165,6 +1168,32 @@ class MainActivity : AppCompatActivity() {
         if (low == "gguf on" || low == "engine on") { GgufEngine.setEnabled(this, true); chatReply("🧠 GGUF engine ON — offline 'ask' ab GGUF se chalega (model ho to)."); return true }
         if (low == "gguf off" || low == "engine off") { GgufEngine.setEnabled(this, false); chatReply("⚪ GGUF engine OFF — ab API keys use hongi."); return true }
         if (low == "gguf unload" || low == "engine unload") { Thread { GgufEngine.unload() }.start(); chatReply("🧠 Model memory se free hua. Agli baar 'ask' par dobara load hoga."); return true }
+        // ---------- v3.7: gguf test — step-by-step self diagnosis ----------
+        if (low == "gguf test" || low == "engine test" || low == "gguf check" || low == "gguf diag") {
+            chatReply("🧠 GGUF self-test shuru...")
+            Thread {
+                val sb = StringBuilder("🧠 *GGUF SELF-TEST*\n")
+                sb.append("1. Native lib: ${if (LlamaBridge.available) "✅ loaded" else "❌ load nahi (build/ABI masla)"}\n")
+                sb.append("2. Engine: ${if (GgufEngine.enabled(this)) "✅ ON" else "⚪ OFF ('gguf on' likho)"}\n")
+                sb.append("3. Model: ${if (GgufEngine.modelPresent(this)) "✅ maujood" else "❌ nahi (LITE: 'transformer download')"}\n")
+                val t0 = System.currentTimeMillis()
+                val ready = GgufEngine.prepare(this) { p -> runOnUiThread { chatReply(p) } }
+                val prepSec = (System.currentTimeMillis() - t0) / 1000.0
+                sb.append("4. Load: ${if (ready) "✅ ${"%.0f".format(prepSec)}s" else "❌ FAIL"}\n")
+                if (ready) {
+                    val t1 = System.currentTimeMillis()
+                    val out = GgufEngine.ask(this, "Reply in one word: 2+2 is?")
+                    val gs = (System.currentTimeMillis() - t1) / 1000.0
+                    if (out != null) {
+                        sb.append("5. Generate: ✅ ${"%.1f".format(gs)}s\n")
+                        sb.append("\n💬 Sample jawab: ").append(out.substringAfter('\n').trim().take(80))
+                        sb.append("\n\n✅ Engine bilkul theek — ab koi bhi sawal seedha likho.")
+                    } else sb.append("5. Generate: ❌ FAIL (load hua lekin jawab nahi bana)\n")
+                }
+                runOnUiThread { chatReply(sb.toString()) }
+            }.start()
+            return true
+        }
         if (low == "keys" || low == "key list") { appendTerm(KeyStore.load(this).joinToString("\n") { (if (it.active) "🟢 " else "⚪ ") + it.label + " [" + it.provider + "]" }.ifBlank { "❌ Koi key nahi — 'admin' likho aur key add karo." }); return true }
         if (low == "terminal" || low == "open terminal") { runOnUiThread { showTerminal(true) }; chatReply("🖥 Terminal khul gaya — screen pe command likho."); return true }
         if (low.contains("full storage") || low.contains("storage full") || low.contains("sab files") || low.contains("all files")) {
@@ -1619,6 +1648,11 @@ class MainActivity : AppCompatActivity() {
     private fun aiAnswer(q: String) {
         chatReply("🤖 Soch raha hoon...")
         Thread {
+            // v3.7: offline model ready nahi to progress messages ke saath pehle prepare karo
+            try {
+                if (GgufEngine.enabled(this) && GgufEngine.modelPresent(this) && !GgufEngine.isReady() && !GgufEngine.isLoading())
+                    GgufEngine.prepare(this) { p -> runOnUiThread { chatReply(p) } }
+            } catch (_: Throwable) {}
             val ans = AIBrain.ask(this, q)
             runOnUiThread {
                 chatReply(ans)

@@ -113,7 +113,7 @@ object AIBrain {
         sb.append(if (hasAnyKey) "🧠 AI se jawab nahi mil paya — key ka credit khatam / key ghalat ho sakti hai, ya internet band hai.\n\n"
                   else "🧠 Is sawal ke liye AI chahiye, aur abhi koi API key connect nahi hai.\n\n")
         sb.append("⚡ Sabse aasan fix — chat mein likho:\n   api key <apni-key>\n(Gemini / OpenAI / Groq / OpenRouter khud pehchan lunga; free Gemini key: aistudio.google.com/apikey)\n")
-        sb.append("\n🧠 GGUF engine: ${if (GgufEngine.enabled(ctx)) "ON hai lekin model nahi mila" else "OFF hai ('gguf on' likho)"} — PRO APK mein Qwen built-in hai.")
+        sb.append("\n🧠 GGUF engine: ${if (GgufEngine.enabled(ctx)) "ON hai lekin jawab nahi bana" else "OFF hai ('gguf on' likho)"} — 'gguf test' chalao, exact wajah pata chalegi.")
         if (off != null) sb.append("\n📦 Offline model ($off) select hai.")
         sb.append("\n\n✅ Tab tak local commands chalte hain: open youtube, call, contact, torch, volume… ('help' likho).")
         return sb.toString()
