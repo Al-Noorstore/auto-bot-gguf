@@ -1204,7 +1204,7 @@ class MainActivity : AppCompatActivity() {
                 val t0 = System.currentTimeMillis()
                 val ready = GgufEngine.prepare(this) { p -> runOnUiThread { chatReply(p) } }
                 val prepSec = (System.currentTimeMillis() - t0) / 1000.0
-                sb.append("4. Load: ${if (ready) "✅ ${"%.0f".format(prepSec)}s" else "❌ FAIL"}\n")
+                sb.append("4. Load: ${if (ready) "✅ ${"%.0f".format(prepSec)}s" else "❌ FAIL — ${LlamaBridge.lastError()}"}\n")
                 if (ready) {
                     val t1 = System.currentTimeMillis()
                     val out = GgufEngine.ask(this, "Reply in one word: 2+2 is?")
@@ -1213,7 +1213,7 @@ class MainActivity : AppCompatActivity() {
                         sb.append("5. Generate: ✅ ${"%.1f".format(gs)}s\n")
                         sb.append("\n💬 Sample jawab: ").append(out.substringAfter('\n').trim().take(80))
                         sb.append("\n\n✅ Engine bilkul theek — ab koi bhi sawal seedha likho.")
-                    } else sb.append("5. Generate: ❌ FAIL (load hua lekin jawab nahi bana)\n")
+                    } else sb.append("5. Generate: ❌ FAIL — ${LlamaBridge.lastError()}\n")
                 }
                 runOnUiThread { chatReply(sb.toString()) }
             }.start()

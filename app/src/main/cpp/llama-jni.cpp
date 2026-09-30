@@ -3,6 +3,7 @@
 #include <jni.h>
 #include <android/log.h>
 #include <cstring>
+#include <cstdarg>
 #include <string>
 #include <vector>
 #include <thread>
@@ -13,6 +14,13 @@
 
 static llama_model *g_model = nullptr;
 static llama_context *g_ctx = nullptr;
+static char g_last_error[256] = "none";
+
+static void set_err(const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    vsnprintf(g_last_error, sizeof(g_last_error), fmt, ap);
+    va_end(ap); LOGI("err: %s", g_last_error);
+}
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_alnoor_autobot_LlamaBridge_nativeLoad(JNIEnv *env, jobject, jstring jpath, jint ctxSize, jint threads) {
@@ -23,7 +31,7 @@ Java_com_alnoor_autobot_LlamaBridge_nativeLoad(JNIEnv *env, jobject, jstring jpa
     llama_model_params mp = llama_model_default_params();
     g_model = llama_model_load_from_file(path, mp);
     env->ReleaseStringUTFChars(jpath, path);
-    if (!g_model) { LOGI("model load FAILED"); return JNI_FALSE; }
+    if (!g_model) { set_err("model load FAILED (%s) — file corrupt/RAM kam?", path); return JNI_FALSE; }
 
     int hc = (int) std::thread::hardware_concurrency();
     if (hc < 2) hc = 2;
@@ -35,8 +43,8 @@ Java_com_alnoor_autobot_LlamaBridge_nativeLoad(JNIEnv *env, jobject, jstring jpa
     cp.n_threads = threads;
     cp.n_threads_batch = threads;
     g_ctx = llama_init_from_model(g_model, cp);
-    if (!g_ctx) { llama_model_free(g_model); g_model = nullptr; LOGI("ctx init FAILED"); return JNI_FALSE; }
-    LOGI("model loaded ok (ctx=%d threads=%d)", ctxSize, threads);
+    if (!g_ctx) { llama_model_free(g_model); g_model = nullptr; set_err("ctx init FAILED (ctx=%d threads=%d)", ctxSize, threads); return JNI_FALSE; }
+    snprintf(g_last_error, sizeof(g_last_error), "none"); LOGI("model loaded ok (ctx=%d threads=%d)", ctxSize, threads);
     return JNI_TRUE;
 }
 
@@ -64,11 +72,16 @@ Java_com_alnoor_autobot_LlamaBridge_nativeGenerate(JNIEnv *env, jobject,
     env->ReleaseStringUTFChars(jprompt, pc);
 
     // ---- tokenize prompt (add_special=true, parse_special=true) ----
+    // v0.5.0 semantics: buffer-null query NEGATIVE value = required size (error NAHI hai!)
+    // v3.9 FIX: pehle yahan negative ko error maan kar empty return ho raha tha — isi se jawab nahi banta tha
     int32_t n_prompt = llama_tokenize(vocab, prompt.c_str(), (int32_t) prompt.size(), nullptr, 0, true, true);
-    if (n_prompt < 0) return env->NewStringUTF("");
+    if (n_prompt < 0) n_prompt = -n_prompt;
+    if (n_prompt <= 0) { set_err("tokenize FAILED (n_prompt=%d)", n_prompt); return env->NewStringUTF(""); }
     std::vector<llama_token> toks((size_t) n_prompt);
-    if (llama_tokenize(vocab, prompt.c_str(), (int32_t) prompt.size(), toks.data(), (int32_t) toks.size(), true, true) < 0)
+    if (llama_tokenize(vocab, prompt.c_str(), (int32_t) prompt.size(), toks.data(), (int32_t) toks.size(), true, true) < 0) {
+        set_err("tokenize FAILED pass-2 (%d tokens)", n_prompt);
         return env->NewStringUTF("");
+    }
     LOGI("prompt tokens: %d", n_prompt);
 
     // ---- stop token: <|im_end|> (Qwen) + EOG ----
@@ -91,15 +104,22 @@ Java_com_alnoor_autobot_LlamaBridge_nativeGenerate(JNIEnv *env, jobject,
     llama_batch batch = llama_batch_get_one(toks.data(), (int32_t) toks.size());
     if (maxTokens < 16) maxTokens = 128;
     for (int i = 0; i < maxTokens; i++) {
-        if (llama_decode(g_ctx, batch) != 0) { LOGI("decode failed"); break; }
+        if (llama_decode(g_ctx, batch) != 0) { set_err("decode FAILED at i=%d (RAM/KV?)", i); break; }
         llama_token id = llama_sampler_sample(smpl, g_ctx, -1);
-        if (id == eos || (im_end >= 0 && id == im_end) || llama_vocab_is_eog(vocab, id)) break;
+        if (id == eos || (im_end >= 0 && id == im_end) || llama_vocab_is_eog(vocab, id)) { if (i == 0) set_err("EGG first token — model confused?"); break; }
         char piece[64];
         int pn = llama_token_to_piece(vocab, id, piece, sizeof(piece), 0, true);
         if (pn > 0) out.append(piece, (size_t) pn);
         batch = llama_batch_get_one(&id, 1);
     }
     llama_sampler_free(smpl);
+    if (out.empty()) set_err("generate produced 0 chars (maxTokens=%d)", maxTokens);
+    else snprintf(g_last_error, sizeof(g_last_error), "none");
     LOGI("generated %d chars", (int) out.size());
     return env->NewStringUTF(out.c_str());
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_alnoor_autobot_LlamaBridge_nativeLastError(JNIEnv *env, jobject) {
+    return env->NewStringUTF(g_last_error);
 }

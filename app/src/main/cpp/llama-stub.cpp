@@ -4,3 +4,4 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_alnoor_autobot_LlamaBridge_native
 extern "C" JNIEXPORT jboolean JNICALL Java_com_alnoor_autobot_LlamaBridge_nativeIsLoaded(JNIEnv *, jobject) { return JNI_FALSE; }
 extern "C" JNIEXPORT void JNICALL Java_com_alnoor_autobot_LlamaBridge_nativeFree(JNIEnv *, jobject) {}
 extern "C" JNIEXPORT jstring JNICALL Java_com_alnoor_autobot_LlamaBridge_nativeGenerate(JNIEnv *e, jobject, jstring, jint, jfloat, jfloat, jint) { return e->NewStringUTF(""); }
+extern "C" JNIEXPORT jstring JNICALL Java_com_alnoor_autobot_LlamaBridge_nativeLastError(JNIEnv *e, jobject) { return e->NewStringUTF("stub build — engine nahi hai"); }

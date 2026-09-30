@@ -22,6 +22,9 @@ object LlamaBridge {
 
     fun free() { if (available) nativeFree() }
 
+    /** v3.9: native layer ka aakhri error (diagnosis ke liye) */
+    fun lastError(): String = if (available) try { nativeLastError() } catch (_: Exception) { "?" } else "native lib missing"
+
     /** blocking call — background thread se bulao */
     fun generate(prompt: String, maxTokens: Int = 200, temp: Float = 0.7f, topP: Float = 0.9f, topK: Int = 40): String =
         if (available) nativeGenerate(prompt, maxTokens, temp, topP, topK) else ""
@@ -30,4 +33,5 @@ object LlamaBridge {
     private external fun nativeIsLoaded(): Boolean
     private external fun nativeFree()
     private external fun nativeGenerate(prompt: String, maxTokens: Int, temp: Float, topP: Float, topK: Int): String
+    private external fun nativeLastError(): String
 }
