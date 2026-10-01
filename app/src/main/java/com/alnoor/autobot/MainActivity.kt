@@ -613,8 +613,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun waSend(contact: String, message: String): String {
         val t = waWebTab() ?: return "❌ WhatsApp Web tab nahi khuli. Pehle 'whatsapp web' likho aur QR scan karo."
-        val cSafe = contact.replace("\\", " ").replace("'", "").replace(""", "").trim()
-        val mSafe = message.replace("\\", " ").replace("'", "\\'").replace(""", "\\"")
+        val cSafe = contact.replace("\\", " ").replace("'", "").replace("\"", "").trim()
+        val mSafe = message.replace("\\", " ").replace("'", "\\'").replace("\"", "\\\"")
         return try {
             waJs(t, """(function(){var b=document.querySelector('#side button[aria-label], #side span[data-icon=search]');if(!b)return 'nosearch';(b.closest('button')||b).click();return 'ok'})()""")
             Thread.sleep(700)
@@ -627,7 +627,7 @@ class MainActivity : AppCompatActivity() {
             Thread.sleep(1200)
             // Verify header / conversation title contains contact
             val hdr = waJs(t, """(function(){var h=document.querySelector('#main header')||document.querySelector('header');return (h&&h.innerText)||''})()""")
-            val hdrClean = hdr.replace(""", "").lowercase()
+            val hdrClean = hdr.replace("\"", "").lowercase()
             if (cSafe.lowercase().length >= 2 && !hdrClean.contains(cSafe.lowercase().take(minOf(8, cSafe.length)))) {
                 return "⛔ Safety: open chat header mein '$contact' confirm nahi hua — message NAHI bheja. Sahi naam se dobara try karo.
 Header: ${hdr.take(80)}"
