@@ -629,13 +629,11 @@ class MainActivity : AppCompatActivity() {
             val hdr = waJs(t, """(function(){var h=document.querySelector('#main header')||document.querySelector('header');return (h&&h.innerText)||''})()""")
             val hdrClean = hdr.replace("\"", "").lowercase()
             if (cSafe.lowercase().length >= 2 && !hdrClean.contains(cSafe.lowercase().take(minOf(8, cSafe.length)))) {
-                return "⛔ Safety: open chat header mein '$contact' confirm nahi hua — message NAHI bheja. Sahi naam se dobara try karo.
-Header: ${hdr.take(80)}"
+                return "⛔ Safety: open chat header mein '$contact' confirm nahi hua — message NAHI bheja. Sahi naam se dobara try karo.\nHeader: ${hdr.take(80)}"
             }
             val s3 = waJs(t, """(function(){var e=document.querySelector('footer div[contenteditable=true]');if(!e)return 'nobox';e.focus();e.textContent='""" + mSafe + """';e.dispatchEvent(new InputEvent('input',{bubbles:true}));var b=document.querySelector('footer button[aria-label*=end], span[data-icon=send], span[data-icon="send"]');if(!b)return 'nosend';(b.closest('button')||b).click();return 'sent'})()""")
             when {
-                s3.contains("sent") -> "✅ Sirf '$contact' ko message bhej diya:
-$message"
+                s3.contains("sent") -> "✅ Sirf '$contact' ko message bhej diya:\n$message"
                 s3.contains("nobox") -> "❌ Message box nahi mila — chat khuli nahi."
                 else -> "⚠️ Message box OK lekin send button nahi mila ($s3)."
             }
@@ -663,24 +661,16 @@ $message"
                         result = try {
                             val url = "https://wa.me/" + num.filter { it.isDigit() } + "?text=" + java.net.URLEncoder.encode(message, "UTF-8")
                             runOnUiThread { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-                            "✅ ${matches[0].name} (${matches[0].number}) — WhatsApp khula, sirf inhe message.
-Send dabao."
+                            "✅ ${matches[0].name} (${matches[0].number}) — WhatsApp khula, sirf inhe message.\nSend dabao."
                         } catch (e: Exception) { "❌ ${e.message}" }
                     }
                     matches.size > 1 -> {
-                        result = "📇 Kai contacts mile — number choose karo:
-" +
-                            matches.mapIndexed { i, e -> "${i + 1}. ${e.name} — ${e.number}" }.joinToString("
-") +
-                            "
-
-Phir: wa bhejo ${matches[0].number} | $message"
+                        result = "📇 Kai contacts mile — number choose karo:\n" +
+                            matches.mapIndexed { i, e -> "${i + 1}. ${e.name} — ${e.number}" }.joinToString("\n") +
+                            "\n\nPhir: wa bhejo ${matches[0].number} | $message"
                     }
                     waWebTab() != null -> result = waSend(q, message)
-                    else -> result = "❌ '$q' phonebook mein nahi.
-• contacts permission / naam check
-• ya: wa bhejo +92... | message
-• ya: whatsapp web + QR, phir naam se"
+                    else -> result = "❌ '$q' phonebook mein nahi.\n• contacts permission / naam check\n• ya: wa bhejo +92... | message\n• ya: whatsapp web + QR, phir naam se"
                 }
             }
             runOnUiThread { chatReply(result) }
