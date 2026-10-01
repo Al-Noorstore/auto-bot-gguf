@@ -24,7 +24,7 @@ object SmartFallback {
         Rule(listOf("key", "api", "gemini", "openai", "groq", "connect", "token"), "api key <apni-key>"),
         Rule(listOf("voice", "mic", "suno", "bol"), "voice   (ya mic 🎤 dabao)"),
         Rule(listOf("apps", "installed", "store", "install", "kahan", "source"), "apps list   |   install source whatsapp"),
-        Rule(listOf("terminal", "shell", "command", "python", "ls"), "terminal"),
+        Rule(listOf("terminal", "shell", "command", "python", "ls", "dep", "busybox", "pip"), "terminal"),
         Rule(listOf("task", "rule", "remember", "status", "yaad"), "task product hunt daily US")
     )
 

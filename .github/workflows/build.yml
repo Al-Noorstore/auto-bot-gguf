@@ -29,33 +29,42 @@ jobs:
           git clone --depth 1 --branch v0.5.0 https://github.com/ggml-org/llama.cpp app/src/main/cpp/llama.cpp
           echo "llama.cpp $(git -C app/src/main/cpp/llama.cpp describe --tags) ready"
 
-      - name: Bundle Qwen2.5-0.5B model (PRO asset)
+      # SmolLM2-135M Q4 (~105MB) — LITE + PRO dono mein bundled (chhote phones support)
+      - name: Bundle SmolLM2-135M (main assets — all APKs)
+        run: |
+          mkdir -p app/src/main/assets/models
+          curl -L --fail --retry 3 -o app/src/main/assets/models/smollm2-135m-instruct-q4_k_m.gguf \
+            https://huggingface.co/QuantFactory/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct.Q4_K_M.gguf
+          ls -la app/src/main/assets/models/
+
+      # Optional larger model only in PRO (users with more RAM)
+      - name: Bundle Qwen2.5-0.5B model (PRO asset only)
         run: |
           mkdir -p app/src/pro/assets/models
           curl -L --fail --retry 3 -o app/src/pro/assets/models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
             https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
           ls -la app/src/pro/assets/models/
 
-      # ---------- AutoBot LITE (no Python — chhota, low-RAM safe, default) ----------
+      # ---------- AutoBot LITE (SmolLM bundled, no Python — low-RAM safe) ----------
       - name: Build AutoBot LITE APK
         run: |
           gradle assembleRelease -PliteBuild=true --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk AutoBot-GGUF-Lite-v3.9.apk
+          cp app/build/outputs/apk/release/app-release.apk AutoBot-GGUF-Lite-v4.0.apk
 
-      # ---------- AutoBot PRO (Python 3.11 inside — zyada RAM wale phone ke liye) ----------
+      # ---------- AutoBot PRO (SmolLM + Qwen + Python) ----------
       - name: Build AutoBot PRO APK
         run: |
           gradle clean assembleRelease --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk AutoBot-GGUF-Pro-v3.9.apk
+          cp app/build/outputs/apk/release/app-release.apk AutoBot-GGUF-Pro-v4.0.apk
 
       - name: Upload LITE APK
         uses: actions/upload-artifact@v4
         with:
           name: AutoBot-LITE-APK
-          path: AutoBot-GGUF-Lite-v3.9.apk
+          path: AutoBot-GGUF-Lite-v4.0.apk
 
       - name: Upload PRO APK
         uses: actions/upload-artifact@v4
         with:
           name: AutoBot-PRO-APK
-          path: AutoBot-GGUF-Pro-v3.9.apk
+          path: AutoBot-GGUF-Pro-v4.0.apk

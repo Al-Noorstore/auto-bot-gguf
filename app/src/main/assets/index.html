@@ -77,8 +77,40 @@
   #plus { transform: scale(1.25); font-weight: 300; }
   #msg { flex: 1; background: none; border: none; color: var(--text); font-size: 16px; font-family: inherit; resize: none; outline: none; max-height: 160px; line-height: 24px; padding: 8px 4px; }
   #msg::placeholder { color: #8e8e8e; }
-  #mic.rec { color: #ff5252; animation: pulse 1s infinite; }
-  @keyframes pulse { 50% { transform: scale(1.15); } }
+  /* Mic recording — Grok-style pulse rings + bars */
+  #mic { position: relative; z-index: 2; }
+  #mic.rec { color: #ff3b5c !important; }
+  #mic.rec .mic-ico { animation: micPulse 1.1s ease-in-out infinite; }
+  @keyframes micPulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.12); opacity: 0.85; }
+  }
+  #mic-wrap { position: relative; width: 40px; height: 40px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  #mic-rings { position: absolute; inset: 0; pointer-events: none; display: none; }
+  #mic.rec ~ #mic-rings, #mic-wrap.rec #mic-rings { display: block; }
+  #mic-wrap.rec #mic-rings { display: block; }
+  .mic-ring {
+    position: absolute; left: 50%; top: 50%; width: 40px; height: 40px;
+    margin: -20px 0 0 -20px; border-radius: 50%;
+    border: 2px solid rgba(255, 59, 92, 0.55);
+    animation: micRing 1.4s ease-out infinite;
+  }
+  .mic-ring.r2 { animation-delay: 0.35s; border-color: rgba(255, 59, 92, 0.35); }
+  .mic-ring.r3 { animation-delay: 0.7s; border-color: rgba(255, 59, 92, 0.2); }
+  @keyframes micRing {
+    0% { transform: scale(0.85); opacity: 0.9; }
+    100% { transform: scale(2.1); opacity: 0; }
+  }
+  #mic-level {
+    display: none; align-items: flex-end; justify-content: center; gap: 3px;
+    height: 18px; margin: 0 0 6px 12px;
+  }
+  #mic-level.on { display: flex; }
+  #mic-level span {
+    width: 3px; border-radius: 2px; background: #ff3b5c;
+    height: 4px; transition: height 0.08s ease;
+    box-shadow: 0 0 6px rgba(255, 59, 92, 0.5);
+  }
   #send { background: var(--send-bg); color: var(--send-fg); border: none; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; margin: 3px; }
   #send:disabled { background: var(--hov); color: #8e8e8e; cursor: default; }
   #send svg { width: 16px; height: 16px; }
@@ -273,11 +305,15 @@
 
   <!-- INPUT BAR -->
   <div id="inputbar">
+    <div id="mic-level" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
     <div id="inputbox">
       <input type="file" id="file" style="display:none" onchange="filePick(this)">
       <button class="ibtn" id="plus" onclick="document.getElementById('file').click()" title="Upload">+</button>
       <textarea id="msg" rows="1" placeholder="Kuch bhi likho — koi sawal ya command"></textarea>
-      <button class="ibtn" id="mic" onclick="micToggle()" title="Voice input">🎤</button>
+      <div id="mic-wrap">
+        <div id="mic-rings"><span class="mic-ring"></span><span class="mic-ring r2"></span><span class="mic-ring r3"></span></div>
+        <button class="ibtn" id="mic" onclick="micToggle()" title="Voice input (offline)"><span class="mic-ico">🎤</span></button>
+      </div>
       <button id="send" disabled onclick="send()" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
     </div>
     <div id="disclaimer" style="display:none">Auto Bot mistakes kar sakta hai. Purchases hamesha owner approval ke baad.</div>
@@ -395,7 +431,16 @@ function bubble(role, text) {
     ? '<div class="bcol"><div class="bubble">' + esc(text) + '</div><div class="copyrow"><button class="copybtn" onclick="copyBubble(this)">&#10697; Copy</button></div></div>'
     : '<span class="av">' + LOGO_SVG + '</span><div class="bcol"><div class="bubble">' + esc(text) + '</div><div class="copyrow"><button class="copybtn" onclick="copyBubble(this)">&#10697; Copy</button></div></div>';
   $('msgs').appendChild(d);
-  $('view').scrollTop = $('view').scrollHeight;
+  // Enter/send ke baad nayi line neeche visible + input bar clear zone
+  try {
+    d.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    const v = $('view');
+    if (v) v.scrollTop = v.scrollHeight;
+    const bar = $('inputbar');
+    if (bar) bar.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  } catch (e) {
+    $('view').scrollTop = $('view').scrollHeight;
+  }
 }
 function typing() {
   const d = document.createElement('div');
@@ -441,6 +486,38 @@ function copyText(t) {
 function copyBubble(btn) { const b = btn.closest('.bcol').querySelector('.bubble'); copyText(b.innerText); btn.textContent = '\u2713 Copied'; setTimeout(() => btn.textContent = '\u238B Copy', 1500); }
 function autoGrow() { const t = $('msg'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px'; }
 
+
+/* Offline/native mic animation helpers (called from Android) */
+window.setMicListening = function(on) {
+  window.__abVoiceOn = !!on;
+  var m = document.getElementById('mic');
+  var w = document.getElementById('mic-wrap');
+  var lv = document.getElementById('mic-level');
+  if (m) {
+    if (on) { m.classList.add('rec'); m.title = 'Sun raha hoon… band karne ke liye dabao'; }
+    else { m.classList.remove('rec'); m.title = 'Voice input (offline)'; }
+  }
+  if (w) { if (on) w.classList.add('rec'); else w.classList.remove('rec'); }
+  if (lv) {
+    if (on) lv.classList.add('on'); else { lv.classList.remove('on');
+      lv.querySelectorAll('span').forEach(function(s){ s.style.height = '4px'; });
+    }
+  }
+};
+window.setMicLevel = function(rms) {
+  var lv = document.getElementById('mic-level');
+  if (!lv || !lv.classList.contains('on')) return;
+  var bars = lv.querySelectorAll('span');
+  var n = typeof rms === 'number' ? rms : 0;
+  // rms ~0..10 typical; map to bar heights
+  var base = Math.max(0, Math.min(10, n));
+  bars.forEach(function(s, i) {
+    var mid = Math.abs(i - 3);
+    var h = 4 + base * (2.2 - mid * 0.25) * (0.6 + Math.random() * 0.4);
+    s.style.height = Math.min(18, Math.max(3, h)) + 'px';
+  });
+};
+
 /* mic (Web Speech API) */
 let rec = null, recOn = false;
 function micToggle() {
@@ -450,13 +527,13 @@ function micToggle() {
   rec = new SR();
   rec.lang = 'ur-PK'; rec.interimResults = true; rec.continuous = false;
   let base = $('msg').value;
-  rec.onstart = () => { recOn = true; $('mic').classList.add('rec'); };
+  rec.onstart = () => { recOn = true; if (window.setMicListening) setMicListening(true); else $('mic').classList.add('rec'); };
   rec.onresult = e => {
     let s = ''; for (const r of e.results) s += r[0].transcript;
     $('msg').value = (base ? base + ' ' : '') + s; autoGrow(); setSend();
   };
   rec.onerror = e => { if (e.error === 'language-not-supported' && rec.lang === 'ur-PK') { rec.lang = 'en-US'; rec.start(); } };
-  rec.onend = () => { recOn = false; $('mic').classList.remove('rec'); };
+  rec.onend = () => { recOn = false; if (window.setMicListening) setMicListening(false); else $('mic').classList.remove('rec'); };
   rec.start();
 }
 /* upload */
@@ -574,7 +651,20 @@ document.querySelectorAll('.logo-slot').forEach(el => el.innerHTML = LOGO_SVG);
 
 /* ---------- init ---------- */
 $('msg').addEventListener('input', () => { setSend(); autoGrow(); });
-$('msg').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+$('msg').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    send();
+    // prompt bhejne ke baad input clear + view neeche, typing line dikhe
+    requestAnimationFrame(() => {
+      try {
+        const v = $('view'); if (v) v.scrollTop = v.scrollHeight;
+        const m = $('msg'); if (m) { m.focus(); autoGrow(); }
+        const bar = $('inputbar'); if (bar) bar.scrollIntoView({ block: 'end' });
+      } catch (err) {}
+    });
+  }
+});
 (function restoreChats() {
   let all = chatsAll();
   if (!all.length && chatHist.length) {

@@ -123,21 +123,37 @@ object AIBrain {
                 else -> openaiCompatible(k, q)
             }
             // error wale jawab ko fail maano (credit khatam / key invalid / network)
-            if (ans.startsWith("❌") || ans.startsWith("⚠️")) null else ans
+            val low = ans.lowercase()
+            if (ans.startsWith("❌") || ans.startsWith("⚠️")) null
+            else if (low.contains("quota") || low.contains("rate limit") || low.contains("insufficient") ||
+                low.contains("credit") || low.contains("billing") || low.contains("resource_exhausted") ||
+                low.contains("exceeded") || low.contains("payment")) null
+            else ans
         } catch (e: Exception) { null }
     }
 
     private fun failReply(ctx: Context, question: String): String {
-        val off = ctx.getSharedPreferences("autobot", Context.MODE_PRIVATE)
-            .getString("brain_offline_model", null)
-        val hasAnyKey = KeyStore.load(ctx).isNotEmpty()
+        val keys = KeyStore.load(ctx)
+        val hasAnyKey = keys.isNotEmpty()
         val sb = StringBuilder()
-        sb.append(if (hasAnyKey) "🧠 AI se jawab nahi mil paya — key ka credit khatam / key ghalat ho sakti hai, ya internet band hai.\n\n"
-                  else "🧠 Is sawal ke liye AI chahiye, aur abhi koi API key connect nahi hai.\n\n")
-        sb.append("⚡ Sabse aasan fix — chat mein likho:\n   api key <apni-key>\n(Gemini / OpenAI / Groq / OpenRouter khud pehchan lunga; free Gemini key: aistudio.google.com/apikey)\n")
-        sb.append("\n🧠 GGUF engine: ${if (GgufEngine.enabled(ctx)) "ON hai lekin jawab nahi bana" else "OFF hai ('gguf on' likho)"} — 'gguf test' chalao, exact wajah pata chalegi.")
-        if (off != null) sb.append("\n📦 Offline model ($off) select hai.")
-        sb.append("\n\n✅ Tab tak local commands chalte hain: open youtube, call, contact, torch, volume… ('help' likho).")
+        if (hasAnyKey) {
+            sb.append("🧠 AI se jawab nahi mil paya — mumkin wajah:\n")
+            sb.append("• API key ka credit khatam / rate-limit\n")
+            sb.append("• Key invalid ya internet band\n")
+            sb.append("• Active key: ${keys.firstOrNull { it.active }?.label ?: keys.first().label}\n\n")
+            sb.append("🔍 Check: api key test | api keys\n")
+        } else {
+            sb.append("🧠 Is sawal ke liye AI chahiye, aur abhi koi API key connect nahi hai.\n\n")
+        }
+        sb.append("⚡ API key jodo:\n   api key <apni-key>\n(Free Gemini: aistudio.google.com/apikey)\n")
+        val ge = if (GgufEngine.enabled(ctx)) "ON" else "OFF ('gguf on' likho)"
+        val err = try { GgufEngine.lastError() } catch (_: Exception) { null }
+        sb.append("\n🧠 GGUF offline: $ge")
+        if (err != null) sb.append(" — last error: $err")
+        sb.append("\n")
+        try { sb.append(GgufEngine.suggestModel(ctx, heavy = question.length > 80)).append("\n") } catch (_: Exception) {}
+        sb.append("\n💡 Commands: model list | model use smol | gguf test | api keys")
+        sb.append("\n✅ Local commands: open youtube, call, contact, torch… ('help')")
         return sb.toString()
     }
 

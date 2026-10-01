@@ -22,7 +22,7 @@ object LlamaBridge {
 
     fun free() { if (available) nativeFree() }
 
-    /** v3.9: native layer ka aakhri error (diagnosis ke liye) */
+    /** native layer ka aakhri error — deep diagnosis */
     fun lastError(): String = if (available) try { nativeLastError() } catch (_: Exception) { "?" } else "native lib missing"
 
     /** blocking call — background thread se bulao */

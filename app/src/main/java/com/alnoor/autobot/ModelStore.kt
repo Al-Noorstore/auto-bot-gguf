@@ -16,8 +16,9 @@ object ModelStore {
     data class Model(val name: String, val file: String, val size: String, val url: String)
 
     val presets = listOf(
-        Model("SmolLM2-135M", "smollm2-135m.gguf", "~145 MB",
-            "https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct-GGUF/resolve/main/smollm2-135m-instruct-q8_0.gguf"),
+        // Q4_K_M ~105MB — 3–4GB RAM phones pe stable; Q8 ~145MB bhi chal sakta hai
+        Model("SmolLM2-135M", "smollm2-135m.gguf", "~105 MB",
+            "https://huggingface.co/QuantFactory/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct.Q4_K_M.gguf"),
         Model("Qwen2.5-0.5B", "qwen2.5-0.5b.gguf", "~400 MB",
             "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"),
         Model("TinyLlama-1.1B", "tinyllama-1.1b.gguf", "~670 MB",

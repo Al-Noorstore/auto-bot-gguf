@@ -372,6 +372,48 @@ class MainActivity : AppCompatActivity() {
     private fun sessCwd(sess: TermSession): String = sess.cwd ?: homeDir().absolutePath
     private fun rootAvailable(): Boolean = try { Shell.isAppGrantedRoot() == true } catch (e: Exception) { false }
 
+
+    /** dep list | dep install X | dep install url URL name | dep remove X */
+    private fun handleDepCommand(trimmed: String, fromChat: Boolean, sess: TermSession): Boolean {
+        val low = trimmed.lowercase()
+        if (low != "dep" && low != "dep list" && low != "deps" && !low.startsWith("dep ")) return false
+        Thread {
+            val msg = try {
+                when {
+                    low == "dep" || low == "dep list" || low == "deps" || low == "dep help" ->
+                        DepStore.listText(this)
+                    low.startsWith("dep install url ") -> {
+                        val rest = trimmed.substring(16).trim().split(Regex("\\s+"))
+                        if (rest.size < 2) "❌ Usage: dep install url <https://...> <name>"
+                        else DepStore.installFromUrl(this, rest[0], rest[1]) { p ->
+                            runOnUiThread { appendTermTo(sess, p + "\n") }
+                        }
+                    }
+                    low.startsWith("dep install ") -> {
+                        val id = trimmed.substring(12).trim()
+                        DepStore.install(this, id) { p ->
+                            runOnUiThread { appendTermTo(sess, p + "\n") }
+                        }
+                    }
+                    low.startsWith("dep remove ") || low.startsWith("dep uninstall ") || low.startsWith("dep delete ") -> {
+                        val id = low.substringAfter(" ").substringAfter(" ").trim().ifBlank {
+                            trimmed.substringAfter(" ").substringAfter(" ").trim()
+                        }
+                        DepStore.remove(this, id.ifBlank { trimmed.substringAfterLast(" ").trim() })
+                    }
+                    else -> DepStore.listText(this)
+                }
+            } catch (e: Exception) {
+                "❌ Dep error: ${e.message}"
+            }
+            runOnUiThread {
+                appendTermTo(sess, msg + "\n")
+                if (fromChat) chatReply(msg)
+            }
+        }.start()
+        return true
+    }
+
     // shell engine: real Android sh, background mein bot bhi use karta hai
     private fun runShell(cmd: String, fromChat: Boolean = false, label: String = "$") {
         val sess = termActive()
@@ -381,6 +423,8 @@ class MainActivity : AppCompatActivity() {
             try {
                 if (cmd.trim().startsWith("py ")) { runPython(cmd.trim().substring(3).removeSurrounding("\""), fromChat); appendTermTo(sess, "$ "); return@Thread }
                 if (cmd.trim().startsWith("pip install ")) { pipInstall(cmd.trim().substring(12), fromChat); appendTermTo(sess, "$ "); return@Thread }
+                val depHandled = handleDepCommand(cmd.trim(), fromChat, sess)
+                if (depHandled) { appendTermTo(sess, "$ "); return@Thread }
                 if (cmd.trim() == "root" || cmd.trim() == "su" || cmd.trim() == "whoami") {
                     val granted = rootAvailable()
                     appendTerm(if (granted) "[ROOT] \u2705 Root MILA \u2014 ab commands root (su) shell se chalenge. Full access!" else "[ROOT] \u274C Root nahi \u2014 normal sh shell (app sandbox). Root commands nahi chalenge.")
@@ -419,7 +463,7 @@ class MainActivity : AppCompatActivity() {
                     val sh = mainShell()
                     if (sh != null) {
                         try {
-                            val r = Shell.cmd(toRun).exec()
+                            val r = Shell.cmd(DepStore.pathExport(this@MainActivity) + "; cd " + shQuote(cwd) + "; " + toRun).exec()
                             var o = r.out.joinToString("\n")
                             val e = r.err.joinToString("\n")
                             if (isCd) {
@@ -436,7 +480,8 @@ class MainActivity : AppCompatActivity() {
                             }
                         } catch (e: Exception) { out = "Error: " + e.message }
                     } else {
-                        val p = ProcessBuilder("sh", "-c", toRun)
+                        val wrapped = DepStore.pathExport(this@MainActivity) + "; " + toRun
+                        val p = ProcessBuilder("sh", "-c", wrapped)
                             .directory(File(cwd))
                             .redirectErrorStream(true)
                             .start()
@@ -568,25 +613,113 @@ class MainActivity : AppCompatActivity() {
 
     private fun waSend(contact: String, message: String): String {
         val t = waWebTab() ?: return "❌ WhatsApp Web tab nahi khuli. Pehle 'whatsapp web' likho aur QR scan karo."
+        val cSafe = contact.replace("\\", " ").replace("'", "").replace(""", "").trim()
+        val mSafe = message.replace("\\", " ").replace("'", "\\'").replace(""", "\\"")
         return try {
-            // step 1: search box khol kar naam likho
             waJs(t, """(function(){var b=document.querySelector('#side button[aria-label], #side span[data-icon=search]');if(!b)return 'nosearch';(b.closest('button')||b).click();return 'ok'})()""")
             Thread.sleep(700)
-            val s1 = waJs(t, """(function(){var e=document.querySelector('#side div[contenteditable=true]');if(!e)return 'nobox';e.focus();e.textContent='""" + contact.replace("'", "") + """';e.dispatchEvent(new InputEvent('input',{bubbles:true}));return 'ok'})()""")
+            val s1 = waJs(t, """(function(){var e=document.querySelector('#side div[contenteditable=true]');if(!e)return 'nobox';e.focus();e.textContent='""" + cSafe + """';e.dispatchEvent(new InputEvent('input',{bubbles:true}));return 'ok'})()""")
             if (!s1.contains("ok")) return "❌ Search box nahi mila ($s1)."
+            Thread.sleep(1400)
+            // Open result whose title matches contact (sirf usi user ko)
+            val s2 = waJs(t, """(function(){var q='""" + cSafe.lowercase() + """';var items=document.querySelectorAll('#side div[role=listitem]');if(items.length==0)return 'noresult';for(var i=0;i<items.length;i++){var tx=(items[i].innerText||'').toLowerCase();if(tx.indexOf(q)>=0){items[i].click();return 'ok:'+i}}items[0].click();return 'ok0'})()""")
+            if (s2.contains("noresult")) return "❌ Chat nahi mili: '$contact'. Naam bilkul sahi likho."
             Thread.sleep(1200)
-            // step 2: pehla result kholo
-            val s2 = waJs(t, """(function(){var items=document.querySelectorAll('#side div[role=listitem]');if(items.length==0)return 'noresult';items[0].click();return 'ok'})()""")
-            if (!s2.contains("ok")) return "❌ Chat nahi mili: '$contact' ($s2). Naam spelling check karo."
-            Thread.sleep(1200)
-            // step 3: message likh kar send
-            val s3 = waJs(t, """(function(){var e=document.querySelector('footer div[contenteditable=true]');if(!e)return 'nobox';e.focus();e.textContent='""" + message.replace("'", "") + """';e.dispatchEvent(new InputEvent('input',{bubbles:true}));var b=document.querySelector('footer button[aria-label*=end], span[data-icon=send]');if(!b)return 'nosend';(b.closest('button')||b).click();return 'sent'})()""")
+            // Verify header / conversation title contains contact
+            val hdr = waJs(t, """(function(){var h=document.querySelector('#main header')||document.querySelector('header');return (h&&h.innerText)||''})()""")
+            val hdrClean = hdr.replace(""", "").lowercase()
+            if (cSafe.lowercase().length >= 2 && !hdrClean.contains(cSafe.lowercase().take(minOf(8, cSafe.length)))) {
+                return "⛔ Safety: open chat header mein '$contact' confirm nahi hua — message NAHI bheja. Sahi naam se dobara try karo.
+Header: ${hdr.take(80)}"
+            }
+            val s3 = waJs(t, """(function(){var e=document.querySelector('footer div[contenteditable=true]');if(!e)return 'nobox';e.focus();e.textContent='""" + mSafe + """';e.dispatchEvent(new InputEvent('input',{bubbles:true}));var b=document.querySelector('footer button[aria-label*=end], span[data-icon=send], span[data-icon="send"]');if(!b)return 'nosend';(b.closest('button')||b).click();return 'sent'})()""")
             when {
-                s3.contains("sent") -> "✅ '$contact' ko message bhej diya: $message"
-                s3.contains("nobox") -> "❌ Message box nahi mila — chat khuli lagti nahi, dobara try karo."
-                else -> "⚠️ Message likha tha lekin send button nahi mila ($s3) — khud Send dabao."
+                s3.contains("sent") -> "✅ Sirf '$contact' ko message bhej diya:
+$message"
+                s3.contains("nobox") -> "❌ Message box nahi mila — chat khuli nahi."
+                else -> "⚠️ Message box OK lekin send button nahi mila ($s3)."
             }
         } catch (e: Exception) { "❌ Bhejne mein masla: " + e.message }
+    }
+
+
+    /** Contact name → phonebook number, phir WA intent; warna WA Web by name */
+    private fun waMessageToPerson(nameOrPhone: String, message: String) {
+        Thread {
+            val q = nameOrPhone.trim()
+            val looksPhone = q.replace("+", "").replace(" ", "").all { it.isDigit() } && q.length >= 8
+            var result: String
+            if (looksPhone) {
+                result = try {
+                    val url = "https://wa.me/" + q.filter { it.isDigit() } + "?text=" + java.net.URLEncoder.encode(message, "UTF-8")
+                    runOnUiThread { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                    "✅ WhatsApp khula: $q — Send confirm karo."
+                } catch (e: Exception) { "❌ WA open fail: ${e.message}" }
+            } else {
+                val matches = if (Phonebook.hasPermission(this)) Phonebook.findByName(this, q) else emptyList()
+                when {
+                    matches.size == 1 -> {
+                        val num = matches[0].number.filter { it.isDigit() || it == '+' }
+                        result = try {
+                            val url = "https://wa.me/" + num.filter { it.isDigit() } + "?text=" + java.net.URLEncoder.encode(message, "UTF-8")
+                            runOnUiThread { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                            "✅ ${matches[0].name} (${matches[0].number}) — WhatsApp khula, sirf inhe message.
+Send dabao."
+                        } catch (e: Exception) { "❌ ${e.message}" }
+                    }
+                    matches.size > 1 -> {
+                        result = "📇 Kai contacts mile — number choose karo:
+" +
+                            matches.mapIndexed { i, e -> "${i + 1}. ${e.name} — ${e.number}" }.joinToString("
+") +
+                            "
+
+Phir: wa bhejo ${matches[0].number} | $message"
+                    }
+                    waWebTab() != null -> result = waSend(q, message)
+                    else -> result = "❌ '$q' phonebook mein nahi.
+• contacts permission / naam check
+• ya: wa bhejo +92... | message
+• ya: whatsapp web + QR, phir naam se"
+                }
+            }
+            runOnUiThread { chatReply(result) }
+        }.start()
+    }
+
+
+    private fun shareImageWhatsApp(path: String, phoneHint: String? = null): String {
+        val f = java.io.File(path)
+        if (!f.isFile) return "❌ Image nahi mili: $path"
+        return try {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                this, packageName + ".fileprovider", f
+            )
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "image/*"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                setPackage("com.whatsapp")
+            }
+            startActivity(send)
+            "✅ WhatsApp share khula — contact choose karke image bhejo." +
+                (if (!phoneHint.isNullOrBlank()) "\n(Target hint: $phoneHint)" else "")
+        } catch (e: Exception) {
+            try {
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    this, packageName + ".fileprovider", f
+                )
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "image/*"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(Intent.createChooser(send, "Image bhejo"))
+                "✅ Share sheet khuli (WhatsApp choose karo)."
+            } catch (e2: Exception) {
+                "❌ Image share fail: ${e2.message}"
+            }
+        }
     }
 
     // ---------- v3.0: NOTIFY numbers (WhatsApp pe notification) ----------
@@ -915,7 +1048,7 @@ class MainActivity : AppCompatActivity() {
             renderTerm()
         }
         findViewById<Button>(R.id.btnTermClose).setOnClickListener { showTerminal(false) }
-        appendTerm("Auto Bot Terminal v2.1 (" + PyEngine.brand + ") — real Android shell (sh)\nWorking dir: " + File(getExternalFilesDir(null), "work").absolutePath + "\nShell: ls, mkdir, echo, cat, rm, cp, mv, ps, df...\n" + PyEngine.pyHint + "\nChalo koi bhi command do!\n")
+        appendTerm("Auto Bot Terminal v2.2 (" + PyEngine.brand + ") — real Android shell (sh)\nWorking dir: " + File(getExternalFilesDir(null), "work").absolutePath + "\nBin (deps): " + DepStore.binDir(this).absolutePath + "\nShell: ls, mkdir, cat, ps, df… | dep list | dep install busybox\n" + PyEngine.pyHint + "\nChalo koi bhi command do!\n")
 
         webView.settings.apply {
             javaScriptEnabled = true
@@ -1187,33 +1320,145 @@ class MainActivity : AppCompatActivity() {
             return true
         }
         // v3.5 GGUF ENGINE commands
+        // ---------- v3.9: model list / switch (smol, qwen, downloaded) ----------
+        if (low == "model list" || low == "models" || low == "model" || low == "offline models") {
+            Thread {
+                val have = GgufEngine.availableModels(this)
+                val pref = GgufEngine.preferredModel(this)
+                val sb = StringBuilder("📦 *Offline models*\n")
+                if (have.isEmpty()) sb.append("— koi extract/download nahi. APK mein SmolLM bundled hai — 'gguf test' se extract hoga.\n")
+                else have.forEachIndexed { i, (name, sz) ->
+                    val mark = when {
+                        pref != null && name.contains(pref.removeSuffix(".gguf"), ignoreCase = true) -> " 👉 preferred"
+                        GgufEngine.isReady() && GgufEngine.status(this).contains(name) -> " 🟢 loaded"
+                        else -> ""
+                    }
+                    sb.append("${i + 1}. ${name.removeSuffix(".gguf")} (${sz / 1048576}MB)$mark\n")
+                }
+                sb.append("\n💡 Switch: model use smol | model use qwen | model use 1\n")
+                sb.append("💡 Auto: model auto\n")
+                sb.append("💡 Download: transformer download 1 (SmolLM) | 2 (Qwen)\n")
+                sb.append("\n").append(GgufEngine.suggestModel(this))
+                runOnUiThread { chatReply(sb.toString()) }
+            }.start()
+            return true
+        }
+        if (low.startsWith("model use ") || low.startsWith("switch model ") || low.startsWith("model switch ") ||
+            low.startsWith("use model ") || low == "smol kar do" || low == "smollm kar do" ||
+            low == "qwen kar do" || low == "switch smol" || low == "switch qwen" ||
+            low == "smol use karo" || low == "qwen use karo") {
+            val arg = when {
+                low == "smol kar do" || low == "smollm kar do" || low == "switch smol" || low == "smol use karo" -> "smol"
+                low == "qwen kar do" || low == "switch qwen" || low == "qwen use karo" -> "qwen"
+                low.startsWith("model use ") -> low.removePrefix("model use ").trim()
+                low.startsWith("switch model ") -> low.removePrefix("switch model ").trim()
+                low.startsWith("model switch ") -> low.removePrefix("model switch ").trim()
+                low.startsWith("use model ") -> low.removePrefix("use model ").trim()
+                else -> ""
+            }
+            if (arg.isBlank() || arg == "auto" || arg == "default") {
+                GgufEngine.setPreferredModel(this, null)
+                chatReply("🔄 Model auto — device RAM ke mutabiq choose hoga.\n" + GgufEngine.suggestModel(this))
+                return true
+            }
+            Thread {
+                // resolve name → file
+                val have = GgufEngine.availableModels(this)
+                val byIndex = arg.toIntOrNull()?.let { n -> have.getOrNull(n - 1)?.first }
+                val q = arg.lowercase().replace(" ", "")
+                val match = byIndex ?: have.firstOrNull { (n, _) ->
+                    val nn = n.lowercase().removeSuffix(".gguf")
+                    nn.contains(q) || q.contains(nn.take(6)) ||
+                        (q.startsWith("smol") && nn.contains("smol")) ||
+                        (q.startsWith("qwen") && nn.contains("qwen")) ||
+                        (q.startsWith("tiny") && nn.contains("tiny"))
+                }?.first
+                if (match == null) {
+                    // try ModelStore presets for download hint
+                    val preset = ModelStore.find(arg)
+                    runOnUiThread {
+                        chatReply(
+                            "❌ Model '$arg' phone pe nahi mila.\n" +
+                                (if (preset != null) "Download: transformer download ${ModelStore.presets.indexOf(preset) + 1}\n" else "") +
+                                "List: model list"
+                        )
+                    }
+                    return@Thread
+                }
+                GgufEngine.setPreferredModel(this, match)
+                GgufEngine.unload()
+                runOnUiThread { chatReply("🔄 Preferred: $match\n⏳ Load ho raha hai...") }
+                val ok = GgufEngine.prepare(this) { p -> runOnUiThread { chatReply(p) } }
+                runOnUiThread {
+                    chatReply(if (ok) "✅ Ab '$match' active hai — sawal likho." else "⚠️ Set hua lekin load fail — 'gguf test' chalao.\n${GgufEngine.lastError() ?: ""}")
+                }
+            }.start()
+            return true
+        }
+        if (low == "model auto" || low == "auto model") {
+            GgufEngine.setPreferredModel(this, null)
+            chatReply("🔄 Model auto mode — RAM ke mutabiq.\n" + GgufEngine.suggestModel(this))
+            return true
+        }
+        if (low == "api keys" || low == "api status" || low == "keys status" || low == "meri keys" || low == "key status") {
+            val keys = KeyStore.load(this)
+            if (keys.isEmpty()) {
+                chatReply("🔑 Koi API key attach nahi.\nLikho: api key <key>\n(Free Gemini: aistudio.google.com/apikey)")
+            } else {
+                val sb = StringBuilder("🔑 *Attached API keys*\n")
+                keys.forEach {
+                    val st = when {
+                        it.active && it.enabled -> "🟢 ACTIVE"
+                        it.enabled -> "⚪ on"
+                        else -> "⏸ off"
+                    }
+                    sb.append("• ${it.label} [${it.provider}] $st\n  model: ${it.model.ifBlank { "default" }}\n")
+                }
+                sb.append("\n💡 api key use <label> | api key test | api key delete <label>")
+                chatReply(sb.toString())
+            }
+            return true
+        }
         if (low == "gguf status" || low == "engine status" || low == "gguf" || low == "engine") {
             Thread { val st = GgufEngine.status(this); runOnUiThread { appendTerm(st) } }.start(); return true
         }
         if (low == "gguf on" || low == "engine on") { GgufEngine.setEnabled(this, true); chatReply("🧠 GGUF engine ON — offline 'ask' ab GGUF se chalega (model ho to)."); return true }
         if (low == "gguf off" || low == "engine off") { GgufEngine.setEnabled(this, false); chatReply("⚪ GGUF engine OFF — ab API keys use hongi."); return true }
         if (low == "gguf unload" || low == "engine unload") { Thread { GgufEngine.unload() }.start(); chatReply("🧠 Model memory se free hua. Agli baar 'ask' par dobara load hoga."); return true }
-        // ---------- v3.7: gguf test — step-by-step self diagnosis ----------
+        // ---------- v3.9: gguf test — step-by-step self diagnosis (low-RAM aware) ----------
         if (low == "gguf test" || low == "engine test" || low == "gguf check" || low == "gguf diag") {
-            chatReply("🧠 GGUF self-test shuru...")
+            chatReply("🧠 GGUF self-test shuru... (1–2 min lag sakta hai, app band mat karo)")
             Thread {
-                val sb = StringBuilder("🧠 *GGUF SELF-TEST*\n")
+                val sb = StringBuilder("🧠 *GGUF SELF-TEST v3.9*\n")
                 sb.append("1. Native lib: ${if (LlamaBridge.available) "✅ loaded" else "❌ load nahi (build/ABI masla)"}\n")
                 sb.append("2. Engine: ${if (GgufEngine.enabled(this)) "✅ ON" else "⚪ OFF ('gguf on' likho)"}\n")
-                sb.append("3. Model: ${if (GgufEngine.modelPresent(this)) "✅ maujood" else "❌ nahi (LITE: 'transformer download')"}\n")
+                sb.append("3. Model asset: ${if (GgufEngine.modelPresent(this)) "✅ maujood" else "❌ nahi (LITE: 'transformer download 2')"}\n")
                 val t0 = System.currentTimeMillis()
                 val ready = GgufEngine.prepare(this) { p -> runOnUiThread { chatReply(p) } }
                 val prepSec = (System.currentTimeMillis() - t0) / 1000.0
-                sb.append("4. Load: ${if (ready) "✅ ${"%.0f".format(prepSec)}s" else "❌ FAIL — ${LlamaBridge.lastError()}"}\n")
+                sb.append("4. Load: ${if (ready) "✅ ${"%.0f".format(prepSec)}s" else "❌ FAIL"}\n")
+                if (!ready) {
+                    val err = GgufEngine.lastError()
+                    if (err != null) sb.append("   ↳ Error: $err\n")
+                    sb.append("\n💡 Tips:\n")
+                    sb.append("• Background apps band karo (free RAM 800MB+)\n")
+                    sb.append("• Storage mein 500MB free rakho\n")
+                    sb.append("• App force-stop karke dobara kholo\n")
+                    sb.append("• Phir 'gguf test' dobara chalao\n")
+                }
                 if (ready) {
                     val t1 = System.currentTimeMillis()
                     val out = GgufEngine.ask(this, "Reply in one word: 2+2 is?")
                     val gs = (System.currentTimeMillis() - t1) / 1000.0
                     if (out != null) {
                         sb.append("5. Generate: ✅ ${"%.1f".format(gs)}s\n")
-                        sb.append("\n💬 Sample jawab: ").append(out.substringAfter('\n').trim().take(80))
+                        sb.append("\n💬 Sample jawab: ").append(out.substringAfter('\n').trim().take(100))
                         sb.append("\n\n✅ Engine bilkul theek — ab koi bhi sawal seedha likho.")
-                    } else sb.append("5. Generate: ❌ FAIL — ${LlamaBridge.lastError()}\n")
+                    } else {
+                        sb.append("5. Generate: ❌ FAIL (load hua lekin jawab nahi bana)\n")
+                        val err = GgufEngine.lastError()
+                        if (err != null) sb.append("   ↳ Error: $err\n")
+                    }
                 }
                 runOnUiThread { chatReply(sb.toString()) }
             }.start()
@@ -1302,6 +1547,546 @@ class MainActivity : AppCompatActivity() {
             chatReply(if (AutoBotAccessibilityService.goHome() == "OK") "🏠 Home." else "❌ Home fail.")
             return true
         }
+
+
+        // ---------- v3.9.3: contacts + clients + daily WA + research ----------
+        if (low == "contacts" || low == "contact list" || low == "phonebook" || low.startsWith("contacts ")) {
+            val q = if (low.startsWith("contacts ")) msg.substringAfter(" ").trim() else ""
+            if (!Phonebook.hasPermission(this)) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.READ_CONTACTS), REQ_CONTACTS)
+                chatReply("📇 Contacts permission maangi — Allow ke baad dobara 'contacts' likho.")
+            } else chatReply(Phonebook.listText(this, q.ifBlank { null }))
+            return true
+        }
+        if (low.startsWith("mera number ") || low.startsWith("my number ") || low.startsWith("remember my number ")) {
+            val n = msg.substringAfter("number ").trim()
+            if (n.length < 8) chatReply("📞 Number do: mera number +923001234567")
+            else {
+                MemoryVault.setMyNumber(this, n)
+                chatReply("✅ Mera number yaad: ${MemoryVault.myNumber(this)}\nRoz report isi pe WhatsApp se ja sakti hai.")
+            }
+            return true
+        }
+        if (low == "mera number" || low == "my number") {
+            val n = MemoryVault.myNumber(this)
+            chatReply(if (n.isNullOrBlank()) "📞 Abhi save nahi. Likho: mera number +92..." else "📞 Mera number: $n")
+            return true
+        }
+        if (low.startsWith("wa bhejo ") || low.startsWith("wa send ") || low.startsWith("whatsapp bhejo ") || low.startsWith("message bhejo ")) {
+            // already may exist — skip if duplicate handler later; this path enhances name→phonebook
+        }
+        if (low.startsWith("client add ") || low.startsWith("lead add ") || low.startsWith("supplier add ")) {
+            val isSupplier = low.startsWith("supplier add ")
+            val body = msg.substringAfter("add ").trim()
+            val parts = body.split("|").map { it.trim() }.filter { it.isNotEmpty() }
+            if (parts.isEmpty()) {
+                chatReply("Usage:\nclient add Ali | phone +92... | email a@b.com | country PK | niche fashion\nsupplier add FactoryCo | phone +86... | country CN | niche kitchen")
+                return true
+            }
+            var name = parts[0]; var phone = ""; var email = ""; var country = ""; var niche = ""; var interest = ""; var profile = ""; var source = "manual"; var notes = ""; var role = if (isSupplier) "supplier" else "client"
+            for (p in parts) {
+                val pl = p.lowercase()
+                when {
+                    pl.startsWith("phone ") || pl.startsWith("number ") -> phone = p.substringAfter(" ").trim()
+                    pl.startsWith("email ") || pl.startsWith("mail ") -> email = p.substringAfter(" ").trim()
+                    pl.startsWith("country ") -> country = p.substringAfter(" ").trim()
+                    pl.startsWith("niche ") -> niche = p.substringAfter(" ").trim()
+                    pl.startsWith("interest ") || pl.startsWith("buy ") -> interest = p.substringAfter(" ").trim()
+                    pl.startsWith("profile ") || pl.startsWith("link ") -> profile = p.substringAfter(" ").trim()
+                    pl.startsWith("source ") -> source = p.substringAfter(" ").trim()
+                    pl.startsWith("note ") || pl.startsWith("notes ") -> notes = p.substringAfter(" ").trim()
+                    pl.startsWith("role ") -> role = p.substringAfter(" ").trim().lowercase().ifBlank { role }
+                    p == parts[0] -> name = p
+                }
+            }
+            val pid = ProjectStore.activeId(this) ?: ""
+            val dup = MemoryVault.findDuplicates(this, name, phone, pid)
+            val c = MemoryVault.Client(name, phone, email, profile, country, niche, interest, source, notes, role, pid)
+            if (dup.byName != null || dup.byPhone != null) {
+                val d = dup.byName ?: dup.byPhone!!
+                val why = buildString {
+                    if (dup.byName != null) append("same name \"${dup.byName!!.name}\"")
+                    if (dup.byPhone != null) {
+                        if (isNotEmpty()) append(" + ")
+                        append("same number ${dup.byPhone!!.phone}")
+                    }
+                }
+                val json = org.json.JSONObject()
+                    .put("name", c.name).put("phone", c.phone).put("email", c.email)
+                    .put("profile", c.profile).put("country", c.country).put("niche", c.niche)
+                    .put("interest", c.interest).put("source", c.source).put("notes", c.notes)
+                    .put("role", c.role).put("projectId", c.projectId).toString()
+                MemoryVault.setPendingDup(this, json)
+                chatReply("⚠️ Duplicate lagta hai ($why).\nPurana: ${d.name} | ${d.phone} | ${d.role}\nNaya save / overwrite? Likho: *haan* ya *nahi*")
+                return true
+            }
+            MemoryVault.addClient(this, c)
+            chatReply("✅ ${c.role} save: ${c.name}\n📞 ${c.phone.ifBlank { "—" }}\nProject: ${if (pid.isEmpty()) "global" else "active"}")
+            return true
+        }
+        if (low == "haan" || low == "han" || low == "yes" || low == "confirm") {
+            val raw = MemoryVault.getPendingDup(this)
+            if (raw != null) {
+                try {
+                    val o = org.json.JSONObject(raw)
+                    val c = MemoryVault.Client(
+                        o.optString("name"), o.optString("phone"), o.optString("email"),
+                        o.optString("profile"), o.optString("country"), o.optString("niche"),
+                        o.optString("interest"), o.optString("source"), o.optString("notes"),
+                        o.optString("role", "client"), o.optString("projectId")
+                    )
+                    MemoryVault.addClient(this, c, force = true)
+                    MemoryVault.clearPendingDup(this)
+                    chatReply("✅ Overwrite save: ${c.name} (${c.role})")
+                } catch (e: Exception) { chatReply("❌ Confirm fail: ${e.message}") }
+                return true
+            }
+        }
+        if (low == "nahi" || low == "no" || low == "cancel") {
+            if (MemoryVault.getPendingDup(this) != null) {
+                MemoryVault.clearPendingDup(this)
+                chatReply("❎ Duplicate save cancel.")
+                return true
+            }
+        }
+        if (low == "clients" || low == "client list" || low == "leads") {
+            chatReply(MemoryVault.clientsReport(this) + "\n\n💡 Fields: client phone Name | +92...\nclient email Name | a@b.com\nclient link Name | https://...\nclient country Name | PK\nclient niche Name | fashion\nclient interest Name | Amazon bags")
+            return true
+        }
+        // client <field> Name | value
+        val clientField = Regex("^client\\s+(phone|number|email|mail|link|profile|post|country|niche|interest|note|notes)\\s+(.+)$", RegexOption.IGNORE_CASE).find(msg.trim())
+        if (clientField != null) {
+            val field = clientField.groupValues[1].lowercase()
+            val rest = clientField.groupValues[2]
+            val parts = rest.split("|", limit = 2).map { it.trim() }
+            if (parts.size < 2) {
+                chatReply("Usage: client $field Ali | value")
+                return true
+            }
+            val name = parts[0]
+            val value = parts[1]
+            val existing = MemoryVault.clients(this).firstOrNull { it.name.equals(name, true) }
+            val base = existing ?: MemoryVault.Client(name = name)
+            val updated = when (field) {
+                "phone", "number" -> base.copy(phone = value, updated = System.currentTimeMillis())
+                "email", "mail" -> base.copy(email = value, updated = System.currentTimeMillis())
+                "link", "profile", "post" -> base.copy(profile = value, updated = System.currentTimeMillis())
+                "country" -> base.copy(country = value, updated = System.currentTimeMillis())
+                "niche" -> base.copy(niche = value, updated = System.currentTimeMillis())
+                "interest" -> base.copy(interest = value, updated = System.currentTimeMillis())
+                "note", "notes" -> base.copy(notes = value, updated = System.currentTimeMillis())
+                else -> base
+            }
+            MemoryVault.addClient(this, updated)
+            chatReply("✅ ${updated.name}\n📞 ${updated.phone.ifBlank { "—" }}\n📧 ${updated.email.ifBlank { "—" }}\n🔗 ${updated.profile.ifBlank { "—" }}\n🌍 ${updated.country.ifBlank { "—" }}\n🏷 ${updated.niche.ifBlank { "—" }}\n🛒 ${updated.interest.ifBlank { "—" }}")
+            return true
+        }
+        if (low.startsWith("client search ") || low.startsWith("find client ") || low.startsWith("research ")) {
+            val rest = msg.substringAfter(" ").trim().let {
+                when {
+                    low.startsWith("client search ") -> msg.substringAfter("search ").trim()
+                    low.startsWith("find client ") -> msg.substringAfter("client ").trim()
+                    else -> msg.substringAfter("research ").trim()
+                }
+            }
+            val bits = rest.split(Regex("\\s+"), limit = 2)
+            val q = bits.getOrNull(0) ?: rest
+            val niche = bits.getOrNull(1) ?: ""
+            chatReply(ClientFinder.researchGuide(q, niche))
+            runOnUiThread {
+                showBrowser(true)
+                ClientFinder.searchUrls(q, niche).take(4).forEach { (_, url) -> webNewTab(url) }
+            }
+            return true
+        }
+
+        // ---------- images: generate / read / WA ----------
+        if (low.startsWith("image generate ") || low.startsWith("generate image ") || low.startsWith("img gen ")) {
+            val prompt = when {
+                low.startsWith("image generate ") -> msg.substringAfter("generate ").trim()
+                low.startsWith("generate image ") -> msg.substringAfter("image ").trim()
+                else -> msg.substringAfter("gen ").trim()
+            }
+            chatReply("🎨 Image bana raha hoon...")
+            Thread {
+                val path = ImageBrain.generate(this, prompt)
+                runOnUiThread {
+                    if (path.startsWith("❌")) chatReply(path)
+                    else chatReply("✅ Image save:\n$path\n💡 wa image  — WhatsApp pe bhejo\n💡 image padho — AI se padho")
+                }
+            }.start()
+            return true
+        }
+        if (low.startsWith("image padho") || low.startsWith("image read") || low.startsWith("read image") || low.startsWith("vision ")) {
+            val rest = when {
+                low.startsWith("vision ") -> msg.substringAfter("vision ").trim()
+                low.startsWith("image padho") -> msg.substringAfter("padho").trim().removePrefix(" ").trim()
+                low.startsWith("image read") -> msg.substringAfter("read").trim().removePrefix(" ").trim()
+                else -> msg.substringAfter("image").trim()
+            }
+            val pathPart: String
+            val question: String
+            if (rest.contains("|")) {
+                val p = rest.split("|", limit = 2)
+                pathPart = p[0].trim()
+                question = p[1].trim().ifBlank { "Is image mein kya hai?" }
+            } else {
+                pathPart = rest
+                question = "Is image / screenshot mein kya likha aur dikh raha hai? Detail mein batao."
+            }
+            val file = when {
+                pathPart.isNotBlank() && java.io.File(pathPart).isFile -> java.io.File(pathPart)
+                else -> ImageBrain.lastGenerated(this)
+            }
+            if (file == null) {
+                chatReply("❌ Image path do ya pehle generate karo.\nimage padho /sdcard/.../pic.jpg | ye kya hai?")
+                return true
+            }
+            chatReply("👁 Image padh raha hoon...")
+            Thread {
+                val ans = ImageBrain.readImage(this, file.absolutePath, question)
+                runOnUiThread { chatReply(ans) }
+            }.start()
+            return true
+        }
+        if (low == "wa image" || low.startsWith("wa image ") || low.startsWith("whatsapp image ") || low.startsWith("send image ")) {
+            val rest = when {
+                low == "wa image" -> ""
+                low.startsWith("wa image ") -> msg.substringAfter("image ").trim()
+                low.startsWith("whatsapp image ") -> msg.substringAfter("image ").trim()
+                else -> msg.substringAfter("image ").trim()
+            }
+            val path = if (rest.isNotBlank() && java.io.File(rest).isFile) rest
+            else ImageBrain.lastGenerated(this)?.absolutePath
+            if (path == null) {
+                chatReply("❌ Pehle image generate karo ya path do:\nwa image /path/to.jpg")
+                return true
+            }
+            runOnUiThread { chatReply(shareImageWhatsApp(path)) }
+            return true
+        }
+        if (low == "last image" || low == "image last") {
+            val f = ImageBrain.lastGenerated(this)
+            chatReply(if (f != null) "🖼 ${f.absolutePath}" else "❌ Koi generated image nahi")
+            return true
+        }
+
+
+        if (low.startsWith("web search ") || low.startsWith("google ") || low.startsWith("search web ")) {
+            val q = msg.substringAfter(" ").trim().let {
+                if (low.startsWith("web search ")) msg.substringAfter("search ").trim()
+                else if (low.startsWith("search web ")) msg.substringAfter("web ").trim()
+                else msg.substringAfter(" ").trim()
+            }
+            val url = "https://www.google.com/search?q=" + java.net.URLEncoder.encode(q, "UTF-8")
+            runOnUiThread { showBrowser(true); webNewTab(url) }
+            chatReply("🔎 Web search: $q")
+            return true
+        }
+        if (low.contains("roz") && (low.contains("client") || low.contains("report")) && (low.contains("whatsapp") || low.contains("wa ") || low.contains("number"))) {
+            // Roz mujhe mere number par client info WhatsApp
+            val my = MemoryVault.myNumber(this)
+            if (my.isNullOrBlank()) {
+                chatReply("📞 Pehle apna number save karo:\nmera number +923001234567\nPhir dobara bolo: roz client report WhatsApp")
+                return true
+            }
+            MemoryVault.setDailyReport(this, true, 9, 0)
+            AlarmEngine.schedule(this, 9, 0, true, "AUTO_CLIENT_REPORT")
+            chatReply("✅ Roz 9:00 AM client report WhatsApp pe ($my) open hogi.\nClients: ${MemoryVault.clients(this).size}\nBand: daily report off")
+            return true
+        }
+        if (low == "daily report off" || low == "roz report band") {
+            MemoryVault.setDailyReport(this, false)
+            chatReply("⏹ Daily WhatsApp client report OFF")
+            return true
+        }
+        if (low == "daily report on" || low == "roz report on") {
+            val my = MemoryVault.myNumber(this)
+            if (my.isNullOrBlank()) { chatReply("Pehle: mera number +92..."); return true }
+            MemoryVault.setDailyReport(this, true, 9, 0)
+            AlarmEngine.schedule(this, 9, 0, true, "AUTO_CLIENT_REPORT")
+            chatReply("✅ Daily report ON — 9 AM WhatsApp ($my)")
+            return true
+        }
+        if (low == "daily report now" || low == "client report ab") {
+            val msg = MemoryVault.buildDailyMessage(this)
+            val my = MemoryVault.myNumber(this)
+            if (!my.isNullOrBlank()) {
+                try {
+                    val url = "https://wa.me/" + my.filter { it.isDigit() } + "?text=" + java.net.URLEncoder.encode(msg.take(3500), "UTF-8")
+                    runOnUiThread { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                    chatReply("📤 Report WhatsApp pe khuli — Send dabao.")
+                } catch (e: Exception) { chatReply(msg) }
+            } else chatReply(msg + "\n\n💡 mera number +92... save karo taake seedha WA khule.")
+            return true
+        }
+        // Message / call saved client or supplier
+        if (low.startsWith("message client ") || low.startsWith("message supplier ") ||
+            low.startsWith("msg client ") || low.startsWith("msg supplier ") ||
+            low.startsWith("client message ") || low.startsWith("supplier message ")) {
+            val toSupplier = low.contains("supplier")
+            val rest = msg.substringAfter(" ").substringAfter(" ").trim()
+            val parts = rest.split("|", limit = 2).map { it.trim() }
+            if (parts.size < 2) {
+                chatReply("Usage: message client Ali | Hello\nmessage supplier Factory | Need quote")
+                return true
+            }
+            val pid = ProjectStore.activeId(this)
+            val hits = MemoryVault.findByName(this, parts[0], pid).filter {
+                if (toSupplier) it.role == "supplier" else it.role != "supplier" || true
+            }
+            val target = hits.firstOrNull() ?: MemoryVault.findByName(this, parts[0]).firstOrNull()
+            if (target == null) chatReply("❌ '${parts[0]}' save nahi. Pehle client/supplier add karo.")
+            else if (target.phone.isBlank()) chatReply("❌ ${target.name} ka number nahi. client phone ${target.name} | +92...")
+            else waMessageToPerson(target.phone, parts[1])
+            return true
+        }
+        if (low.startsWith("call client ") || low.startsWith("call supplier ") ||
+            (low.startsWith("call ") && !low.startsWith("call me"))) {
+            val q = msg.substringAfter("call ").trim().removePrefix("client ").removePrefix("supplier ").trim()
+            if (q.isBlank()) { chatReply("Usage: call client Ali"); return true }
+            val pid = ProjectStore.activeId(this)
+            var target = MemoryVault.findByName(this, q, pid).firstOrNull()
+            if (target == null) target = MemoryVault.findByName(this, q).firstOrNull()
+            val num = target?.phone?.ifBlank { null } ?: q
+            if (num.filter { it.isDigit() }.length < 8) {
+                chatReply("❌ Number/name nahi mila: $q")
+                return true
+            }
+            runOnUiThread {
+                try {
+                    val u = Uri.parse("tel:" + num.filter { it.isDigit() || it == '+' })
+                    startActivity(Intent(Intent.ACTION_DIAL, u))
+                    chatReply("📞 Dial: ${target?.name ?: num}")
+                } catch (e: Exception) { chatReply("❌ Call fail: ${e.message}") }
+            }
+            return true
+        }
+        // Project-scoped memory (mix nahi hota)
+        if (low.startsWith("remember ") || low.startsWith("yaad ") || low.startsWith("project memory ")) {
+            val rest = when {
+                low.startsWith("project memory ") -> msg.substringAfter("memory ").trim()
+                low.startsWith("yaad ") -> msg.substringAfter("yaad ").trim()
+                else -> msg.substringAfter("remember ").trim()
+            }
+            if (rest.contains("|")) {
+                val (k, v) = rest.split("|", limit = 2).map { it.trim() }
+                if (ProjectStore.active(this) == null) chatReply("❌ Pehle: project open myapp")
+                else {
+                    ProjectStore.memorySet(this, k, v)
+                    chatReply("🧠 Yaad (sirf is project): $k = $v")
+                }
+            } else {
+                chatReply(ProjectStore.memoryAll(this) + "\n💡 remember key | value")
+            }
+            return true
+        }
+        if (low == "project memory" || low == "memory") {
+            chatReply(ProjectStore.memoryAll(this)); return true
+        }
+        // Coding / files inside active project only
+        if (low.startsWith("code ") || low.startsWith("write file ") || low.startsWith("create file ")) {
+            val act = ProjectStore.active(this)
+            val dir = when {
+                act != null -> File(act.path)
+                currentProject.exists() -> currentProject
+                else -> File(getExternalFilesDir(null), "work/default").apply { mkdirs() }
+            }
+            val rest = msg.substringAfter(" ").trim().let {
+                if (low.startsWith("write file ") || low.startsWith("create file ")) msg.substringAfter("file ").trim()
+                else msg.substringAfter("code ").trim()
+            }
+            // code main.py | print("hi")
+            val parts = rest.split("|", limit = 2).map { it.trim() }
+            if (parts.size < 2) {
+                chatReply("Usage: code main.py | print(\"hello\")\nActive project folder: ${dir.absolutePath}")
+                return true
+            }
+            val fname = parts[0].replace("..", "").replace("/", "_").replace("\\", "_")
+            val content = parts[1]
+            try {
+                val f = File(dir, fname)
+                f.parentFile?.mkdirs()
+                f.writeText(content)
+                chatReply("📄 File: ${f.absolutePath}\n(${content.length} chars)\nProject mix nahi — sirf is folder mein.")
+            } catch (e: Exception) { chatReply("❌ Write fail: ${e.message}") }
+            return true
+        }
+        if (low.startsWith("mkdir ") || low == "folder list" || low.startsWith("folder ")) {
+            val act = ProjectStore.active(this)
+            val root = when {
+                act != null -> File(act.path)
+                currentProject.exists() -> currentProject
+                else -> File(getExternalFilesDir(null), "work").apply { mkdirs() }
+            }
+            if (low == "folder list" || low == "folder") {
+                val files = root.listFiles()?.joinToString("\n") { (if (it.isDirectory) "📁 " else "📄 ") + it.name } ?: "(empty)"
+                chatReply("📂 ${root.absolutePath}\n$files")
+                return true
+            }
+            if (low.startsWith("mkdir ")) {
+                val name = msg.substringAfter("mkdir ").trim().replace("..", "")
+                val f = File(root, name)
+                val ok = f.mkdirs()
+                chatReply(if (ok || f.isDirectory) "📁 ${f.absolutePath}" else "❌ mkdir fail")
+                return true
+            }
+        }
+
+
+        // ---------- v3.9.2: extra screen / automation ----------
+        if (low.startsWith("type ") || low.startsWith("likho ") || low.startsWith("write ")) {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            val text = msg.substringAfter(" ").trim()
+            val res = AutoBotAccessibilityService.typeText(text)
+            chatReply(when (res) {
+                "OK" -> "⌨️ Typed: $text"
+                "NO_EDIT" -> "❌ Koi text field focus nahi — pehle field tap karo."
+                "OFF" -> accSteps
+                else -> "❌ Type fail ($res)"
+            })
+            return true
+        }
+        if (low.startsWith("tap xy ") || low.startsWith("click xy ")) {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            val parts = low.substringAfter("xy ").trim().split(Regex("\\s+"))
+            if (parts.size < 2) { chatReply("Usage: tap xy 500 800"); return true }
+            val x = parts[0].toFloatOrNull(); val y = parts[1].toFloatOrNull()
+            if (x == null || y == null) { chatReply("❌ Numbers chahiye: tap xy 500 800"); return true }
+            chatReply(if (AutoBotAccessibilityService.tapXY(x, y) == "OK") "👆 Tap ($x,$y)" else "❌ Tap fail")
+            return true
+        }
+        if (low.contains("swipe left") || low == "left swipe") {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            chatReply(if (AutoBotAccessibilityService.swipeHorizontal(true) == "OK") "👈 Swipe left" else "❌ Fail")
+            return true
+        }
+        if (low.contains("swipe right") || low == "right swipe") {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            chatReply(if (AutoBotAccessibilityService.swipeHorizontal(false) == "OK") "👉 Swipe right" else "❌ Fail")
+            return true
+        }
+        if (low == "recents" || low.contains("recent apps")) {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            chatReply(if (AutoBotAccessibilityService.recents() == "OK") "🗂 Recents" else "❌ Fail")
+            return true
+        }
+        if (low == "screen info" || low == "kaunsi app" || low == "which app") {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            val pkg = AutoBotAccessibilityService.foregroundPackage()
+            chatReply("📱 Foreground: ${pkg.ifBlank { "unknown" }}")
+            return true
+        }
+        // Projects
+        if (low == "project list" || low == "projects" || low == "project status") {
+            chatReply(ProjectStore.status(this)); return true
+        }
+        if (low.startsWith("project new ") || low.startsWith("project create ")) {
+            val name = msg.substringAfter(" ").substringAfter(" ").trim()
+            if (name.isBlank()) { chatReply("📁 Naam do: project new myapp"); return true }
+            val p = ProjectStore.create(this, name)
+            currentProject = File(p.path)
+            chatReply("📁 Project '${p.name}' ready + active\n${p.path}\nTerminal/py isi folder mein chalega.")
+            return true
+        }
+        if (low.startsWith("project open ") || low.startsWith("project switch ")) {
+            val q = msg.substringAfter(" ").substringAfter(" ").trim()
+            val p = ProjectStore.open(this, q)
+            if (p == null) chatReply("❌ Project nahi mila. 'project list'")
+            else {
+                currentProject = File(p.path)
+                chatReply("👉 Active project: ${p.name}\n${p.path}")
+            }
+            return true
+        }
+        if (low.startsWith("project note ")) {
+            val note = msg.substringAfter("note ").trim()
+            if (ProjectStore.note(this, note)) chatReply("📝 Note save (active project)")
+            else chatReply("❌ Pehle 'project open' karo")
+            return true
+        }
+        // In-app browser tabs
+        if (low == "tabs" || low == "tab list" || low == "browser tabs") {
+            if (webTabs.isEmpty()) chatReply("🌐 Koi in-app tab nahi — 'browser' ya 'chrome google.com'")
+            else {
+                val sb = StringBuilder("🌐 *In-app tabs* (active #${webTabs.indexOfFirst { it.id == webActiveId } + 1})\n")
+                webTabs.forEachIndexed { i, tab ->
+                    val u = try { tab.wv.url } catch (_: Exception) { null } ?: ""
+                    val mark = if (tab.id == webActiveId) " 👉" else ""
+                    sb.append("${i + 1}. ${u.take(50)}$mark\n")
+                }
+                sb.append("\n💡 tab 2 | tab new <url> | tab band | tab close all")
+                chatReply(sb.toString())
+            }
+            return true
+        }
+        if (low.startsWith("tab new ") || low == "new tab" || low == "tab new") {
+            val url = if (low.startsWith("tab new ")) msg.substringAfter("new ").trim() else "https://www.google.com"
+            val u = if (url.startsWith("http")) url else "https://$url"
+            runOnUiThread { showBrowser(true); webNewTab(u) }
+            chatReply("➕ Naya tab: $u")
+            return true
+        }
+        if (Regex("^tab\\s+\\d+$").matches(low)) {
+            val n = low.substringAfter("tab ").trim().toIntOrNull() ?: 0
+            if (n < 1 || n > webTabs.size) chatReply("❌ Tab $n nahi. 'tabs' dekho.")
+            else {
+                runOnUiThread { showBrowser(true); webSwitch(webTabs[n - 1].id) }
+                chatReply("👉 Tab $n active — ab isi tab pe kaam.")
+            }
+            return true
+        }
+        if (low == "tab band" || low == "tab close" || low == "close tab") {
+            runOnUiThread { webCloseActive() }
+            chatReply("🗑 Active tab band.")
+            return true
+        }
+        if (low == "tab close all" || low == "close all tabs") {
+            runOnUiThread {
+                while (webTabs.isNotEmpty()) webCloseActive()
+            }
+            chatReply("🗑 Saari in-app tabs band.")
+            return true
+        }
+        if (low.startsWith("chrome youtube") || low == "youtube chrome" || low.startsWith("yt chrome")) {
+            val q = msg.substringAfter("youtube").substringAfter("chrome").trim().ifBlank { msg.substringAfter("yt chrome").trim() }
+            val url = if (q.isBlank()) "https://www.youtube.com"
+            else "https://www.youtube.com/results?search_query=" + java.net.URLEncoder.encode(q, "UTF-8")
+            runOnUiThread { showBrowser(true); webNewTab(url) }
+            chatReply("▶️ Chrome-tab (in-app) YouTube: ${q.ifBlank { "home" }}")
+            return true
+        }
+        if (low == "whatsapp web" || low == "wa web") {
+            runOnUiThread { showBrowser(true); webNewTab("https://web.whatsapp.com") }
+            chatReply("💬 WhatsApp Web tab khuli — ek dafa QR scan karo. Phir:\n• wa padho\n• wa bhejo <naam> | <message>\nSirf usi contact ko jayega jiska naam match kare.")
+            return true
+        }
+        if (low == "wa padho" || low == "wa read" || low == "whatsapp padho") {
+            Thread { val r = waReadChats(); runOnUiThread { chatReply(r) } }.start(); return true
+        }
+        if (low.startsWith("wa bhejo ") || low.startsWith("wa send ") || low.startsWith("whatsapp bhejo ") || low.startsWith("message bhejo ")) {
+            val rest = when {
+                low.startsWith("whatsapp bhejo ") -> msg.substringAfter("bhejo ").trim()
+                low.startsWith("message bhejo ") -> msg.substringAfter("bhejo ").trim()
+                else -> msg.substringAfter(" ").substringAfter(" ").trim()
+            }
+            val parts = rest.split("|", limit = 2).map { it.trim() }
+            if (parts.size < 2) {
+                chatReply("Usage: wa bhejo Ali | Assalam o alaikum\nPhonebook naam pehchaanega; sirf usi number pe WA khulega.")
+                return true
+            }
+            ProjectStore.setLastTask(this, "wa:${parts[0]}")
+            waMessageToPerson(parts[0], parts[1])
+            return true
+        }
+        if (low.startsWith("task ") || low.startsWith("automation ")) {
+            val task = msg.substringAfter(" ").trim()
+            ProjectStore.setLastTask(this, task)
+            chatReply("📋 Task yaad: $task\nAb steps bolo: screen parho → tap … → type …\nYa: wa bhejo Name | msg")
+            return true
+        }
+
+
         // ---------- v3.4: chrome mein direct kholo ----------
         val chromeM = Regex("^\\s*chrome\\s+(.+?)\\s*(?:kholo|khol|karo|kro|do)*\\s*$").find(low)?.groupValues?.get(1)
         if (chromeM != null) {
@@ -1626,6 +2411,9 @@ class MainActivity : AppCompatActivity() {
         }
 
 
+        if (low == "dep" || low == "dep list" || low == "deps" || low.startsWith("dep ")) {
+            handleDepCommand(msg.trim(), fromChat = true, termActive()); return true
+        }
         if (low.startsWith("run ")) { runShell(msg.substring(4).trim(), fromChat = true); chatReply("⏳ Command chal raha hai terminal mein..."); return true }
         if (low.startsWith("python ") || low.startsWith("py ")) { runPython(msg.substring(low.indexOf(' ') + 1).trim(), fromChat = true); return true }
         if (low.startsWith("project ")) {
@@ -2071,7 +2859,7 @@ class MainActivity : AppCompatActivity() {
             sr.setRecognitionListener(object : android.speech.RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) { voiceMicOn(); status("🎤 Sun raha hoon... bolo!") }
                 override fun onBeginningOfSpeech() {}
-                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onRmsChanged(rmsdB: Float) { runOnUiThread { voiceMicLevel(rmsdB) } }
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() {}
                 override fun onError(error: Int) {
@@ -2141,11 +2929,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun voiceMicOn() {
-        try { webView.evaluateJavascript("(function(){window.__abVoiceOn=true; var m=document.getElementById('mic'); if(m){m.classList.add('rec'); m.title='Sun raha hoon... dabao band karne ke liye';}})()", null) } catch (_: Exception) {}
+        try {
+            webView.evaluateJavascript(
+                "(function(){if(window.setMicListening)setMicListening(true);else{window.__abVoiceOn=true;var m=document.getElementById('mic');if(m)m.classList.add('rec');}})()",
+                null
+            )
+        } catch (_: Exception) {}
     }
 
     private fun voiceMicOff() {
-        try { webView.evaluateJavascript("(function(){window.__abVoiceOn=false; var m=document.getElementById('mic'); if(m){m.classList.remove('rec'); m.title='Voice input (offline engine)';}})()", null) } catch (_: Exception) {}
+        try {
+            webView.evaluateJavascript(
+                "(function(){if(window.setMicListening)setMicListening(false);else{window.__abVoiceOn=false;var m=document.getElementById('mic');if(m)m.classList.remove('rec');}})()",
+                null
+            )
+        } catch (_: Exception) {}
+    }
+
+    private fun voiceMicLevel(rmsdB: Float) {
+        // Map Android rms (~ -2..10) to 0..10 for UI bars
+        val level = ((rmsdB + 2f) / 1.2f).coerceIn(0f, 10f)
+        try {
+            webView.evaluateJavascript(
+                "(function(){if(window.setMicLevel)setMicLevel($level);})()",
+                null
+            )
+        } catch (_: Exception) {}
     }
 
     // ---------- v2.6: brain contact → phone contact book bhi ----------
