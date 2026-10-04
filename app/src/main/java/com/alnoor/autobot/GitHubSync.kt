@@ -240,7 +240,7 @@ jobs:
           path: |
             app/build/outputs/apk/**/*.apk
             **/build/outputs/apk/**/*.apk
-$aabSteps
+${'$'}aabSteps
 """.trimIndent() + "\n"
     }
 
@@ -261,7 +261,7 @@ jobs:
       - name: Detect & build EXE
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
+          ${'$'}ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path out | Out-Null
 
           if (Test-Path "package.json") {
@@ -272,23 +272,23 @@ jobs:
               Get-ChildItem -Recurse -Filter *.exe | Copy-Item -Destination out -ErrorAction SilentlyContinue
             } else {
               npm run build --if-present
-              npx --yes pkg . --targets node18-win-x64 --out-path out 2>$null
+              npx --yes pkg . --targets node18-win-x64 --out-path out 2>${'$'}null
               Get-ChildItem -Recurse -Filter *.exe | Copy-Item -Destination out -ErrorAction SilentlyContinue
             }
           }
           elseif (Get-ChildItem -Recurse -Filter *.csproj | Select-Object -First 1) {
             Write-Host ".NET project"
-            $proj = (Get-ChildItem -Recurse -Filter *.csproj | Select-Object -First 1).FullName
-            dotnet publish $proj -c Release -r win-x64 --self-contained true -o out
+            ${'$'}proj = (Get-ChildItem -Recurse -Filter *.csproj | Select-Object -First 1).FullName
+            dotnet publish ${'$'}proj -c Release -r win-x64 --self-contained true -o out
           }
           elseif ((Test-Path "main.py") -or (Test-Path "app.py") -or (Test-Path "requirements.txt")) {
             Write-Host "Python project"
             python -m pip install --upgrade pip
             if (Test-Path "requirements.txt") { pip install -r requirements.txt }
             pip install pyinstaller
-            $entry = "main.py"
-            if (Test-Path "app.py") { $entry = "app.py" }
-            pyinstaller --noconfirm --clean -F $entry --distpath out --workpath build_py --specpath build_py
+            ${'$'}entry = "main.py"
+            if (Test-Path "app.py") { ${'$'}entry = "app.py" }
+            pyinstaller --noconfirm --clean -F ${'$'}entry --distpath out --workpath build_py --specpath build_py
           }
           elseif (Test-Path "go.mod") {
             Write-Host "Go project"
@@ -299,10 +299,10 @@ jobs:
             exit 1
           }
 
-          $exes = Get-ChildItem -Path out -Filter *.exe -Recurse -ErrorAction SilentlyContinue
-          if (-not $exes) { $exes = Get-ChildItem -Recurse -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 5 }
-          if (-not $exes) { Write-Host "No .exe produced"; exit 1 }
-          Write-Host "Built:" $exes.FullName
+          ${'$'}exes = Get-ChildItem -Path out -Filter *.exe -Recurse -ErrorAction SilentlyContinue
+          if (-not ${'$'}exes) { ${'$'}exes = Get-ChildItem -Recurse -Filter *.exe -ErrorAction SilentlyContinue | Select-Object -First 5 }
+          if (-not ${'$'}exes) { Write-Host "No .exe produced"; exit 1 }
+          Write-Host "Built:" ${'$'}exes.FullName
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4
@@ -337,65 +337,65 @@ jobs:
       # IOS_TEAM_ID = Apple Team ID (optional)
       - name: Install Apple certificate (if secrets set)
         env:
-          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
-          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
-          KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD || 'autobot-temp' }}
+          IOS_CERTIFICATE_BASE64: ${'$'}{{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${'$'}{{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISION_PROFILE_BASE64: ${'$'}{{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${'$'}{{ secrets.IOS_KEYCHAIN_PASSWORD || 'autobot-temp' }}
         run: |
           set -e
-          if [ -z "$IOS_CERTIFICATE_BASE64" ] || [ -z "$IOS_PROVISION_PROFILE_BASE64" ]; then
-            echo "SIGNING=0" >> $GITHUB_ENV
+          if [ -z "${'$'}IOS_CERTIFICATE_BASE64" ] || [ -z "${'$'}IOS_PROVISION_PROFILE_BASE64" ]; then
+            echo "SIGNING=0" >> ${'$'}GITHUB_ENV
             echo "No signing secrets — unsigned/build-only mode"
             exit 0
           fi
-          echo "SIGNING=1" >> $GITHUB_ENV
-          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
-          PP_PATH=$RUNNER_TEMP/build.mobileprovision
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-          echo -n "$IOS_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
-          echo -n "$IOS_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security import $CERTIFICATE_PATH -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          echo "SIGNING=1" >> ${'$'}GITHUB_ENV
+          CERTIFICATE_PATH=${'$'}RUNNER_TEMP/build_certificate.p12
+          PP_PATH=${'$'}RUNNER_TEMP/build.mobileprovision
+          KEYCHAIN_PATH=${'$'}RUNNER_TEMP/app-signing.keychain-db
+          echo -n "${'$'}IOS_CERTIFICATE_BASE64" | base64 --decode -o ${'$'}CERTIFICATE_PATH
+          echo -n "${'$'}IOS_PROVISION_PROFILE_BASE64" | base64 --decode -o ${'$'}PP_PATH
+          security create-keychain -p "${'$'}KEYCHAIN_PASSWORD" ${'$'}KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 ${'$'}KEYCHAIN_PATH
+          security unlock-keychain -p "${'$'}KEYCHAIN_PASSWORD" ${'$'}KEYCHAIN_PATH
+          security import ${'$'}CERTIFICATE_PATH -P "${'$'}IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k ${'$'}KEYCHAIN_PATH
+          security list-keychain -d user -s ${'$'}KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${'$'}KEYCHAIN_PASSWORD" ${'$'}KEYCHAIN_PATH
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          PROFILE_ID=$(/usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin <<< $(security cms -D -i $PP_PATH))
-          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles/$PROFILE_ID.mobileprovision
-          echo "PROFILE_UUID=$PROFILE_ID" >> $GITHUB_ENV
+          PROFILE_ID=${'$'}(/usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin <<< ${'$'}(security cms -D -i ${'$'}PP_PATH))
+          cp ${'$'}PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles/${'$'}PROFILE_ID.mobileprovision
+          echo "PROFILE_UUID=${'$'}PROFILE_ID" >> ${'$'}GITHUB_ENV
           echo "Signing certificate + provision installed"
 
       - name: Detect & build iOS
         env:
-          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          IOS_TEAM_ID: ${'$'}{{ secrets.IOS_TEAM_ID }}
         run: |
           set -e
           mkdir -p out
           SIGN_ARGS="CODE_SIGNING_ALLOWED=NO"
-          if [ "${SIGNING:-0}" = "1" ]; then
+          if [ "${'$'}{SIGNING:-0}" = "1" ]; then
             SIGN_ARGS="CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Manual"
-            if [ -n "$IOS_TEAM_ID" ]; then SIGN_ARGS="$SIGN_ARGS DEVELOPMENT_TEAM=$IOS_TEAM_ID"; fi
-            if [ -n "${PROFILE_UUID:-}" ]; then SIGN_ARGS="$SIGN_ARGS PROVISIONING_PROFILE=$PROFILE_UUID"; fi
+            if [ -n "${'$'}IOS_TEAM_ID" ]; then SIGN_ARGS="${'$'}SIGN_ARGS DEVELOPMENT_TEAM=${'$'}IOS_TEAM_ID"; fi
+            if [ -n "${'$'}{PROFILE_UUID:-}" ]; then SIGN_ARGS="${'$'}SIGN_ARGS PROVISIONING_PROFILE=${'$'}PROFILE_UUID"; fi
           fi
 
           if [ -f "pubspec.yaml" ] && [ -d "ios" ]; then
             echo "Flutter iOS"
             if ! command -v flutter >/dev/null; then
-              git clone https://github.com/flutter/flutter.git -b stable --depth 1 $HOME/flutter
-              export PATH="$HOME/flutter/bin:$PATH"
+              git clone https://github.com/flutter/flutter.git -b stable --depth 1 ${'$'}HOME/flutter
+              export PATH="${'$'}HOME/flutter/bin:${'$'}PATH"
             fi
             flutter pub get
-            if [ "${SIGNING:-0}" = "1" ]; then
+            if [ "${'$'}{SIGNING:-0}" = "1" ]; then
               flutter build ipa --release || flutter build ios --release
             else
               flutter build ios --release --no-codesign
             fi
             if [ -d "build/ios/iphoneos" ]; then
               cd build/ios/iphoneos
-              APP=$(ls -d *.app 2>/dev/null | head -1)
-              if [ -n "$APP" ]; then
-                mkdir -p Payload && cp -r "$APP" Payload/
+              APP=${'$'}(ls -d *.app 2>/dev/null | head -1)
+              if [ -n "${'$'}APP" ]; then
+                mkdir -p Payload && cp -r "${'$'}APP" Payload/
                 zip -r ../../../../out/app.ipa Payload
               fi
               cd -
@@ -407,45 +407,45 @@ jobs:
             npm ci || npm install
             cd ios
             [ -f Podfile ] && (pod install --repo-update || pod install)
-            WORKSPACE=$(ls -d *.xcworkspace 2>/dev/null | head -1)
-            PROJECT=$(ls -d *.xcodeproj 2>/dev/null | head -1)
-            SCHEME=$(xcodebuild -list ${WORKSPACE:+-workspace "$WORKSPACE"} ${PROJECT:+-project "$PROJECT"} 2>/dev/null | awk '/Schemes:/{f=1;next} f&&NF{print $1; exit}')
-            SCHEME=${SCHEME:-Runner}
-            if [ -n "$WORKSPACE" ]; then
-              xcodebuild -workspace "$WORKSPACE" -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build $SIGN_ARGS
+            WORKSPACE=${'$'}(ls -d *.xcworkspace 2>/dev/null | head -1)
+            PROJECT=${'$'}(ls -d *.xcodeproj 2>/dev/null | head -1)
+            SCHEME=${'$'}(xcodebuild -list ${'$'}{WORKSPACE:+-workspace "${'$'}WORKSPACE"} ${'$'}{PROJECT:+-project "${'$'}PROJECT"} 2>/dev/null | awk '/Schemes:/{f=1;next} f&&NF{print ${'$'}1; exit}')
+            SCHEME=${'$'}{SCHEME:-Runner}
+            if [ -n "${'$'}WORKSPACE" ]; then
+              xcodebuild -workspace "${'$'}WORKSPACE" -scheme "${'$'}SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build ${'$'}SIGN_ARGS
             else
-              xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build $SIGN_ARGS
+              xcodebuild -project "${'$'}PROJECT" -scheme "${'$'}SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build ${'$'}SIGN_ARGS
             fi
-            APP=$(find build -name "*.app" | head -1)
-            if [ -n "$APP" ]; then
-              mkdir -p Payload && cp -r "$APP" Payload/ && zip -r ../out/app.ipa Payload
+            APP=${'$'}(find build -name "*.app" | head -1)
+            if [ -n "${'$'}APP" ]; then
+              mkdir -p Payload && cp -r "${'$'}APP" Payload/ && zip -r ../out/app.ipa Payload
             fi
             cd ..
 
           elif ls *.xcodeproj >/dev/null 2>&1 || ls *.xcworkspace >/dev/null 2>&1; then
             echo "Native Xcode"
-            WORKSPACE=$(ls -d *.xcworkspace 2>/dev/null | head -1)
-            PROJECT=$(ls -d *.xcodeproj 2>/dev/null | head -1)
-            if [ -n "$WORKSPACE" ]; then
-              SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" | awk '/Schemes:/{f=1;next} f&&NF{print $1; exit}')
-              xcodebuild -workspace "$WORKSPACE" -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build $SIGN_ARGS
+            WORKSPACE=${'$'}(ls -d *.xcworkspace 2>/dev/null | head -1)
+            PROJECT=${'$'}(ls -d *.xcodeproj 2>/dev/null | head -1)
+            if [ -n "${'$'}WORKSPACE" ]; then
+              SCHEME=${'$'}(xcodebuild -list -workspace "${'$'}WORKSPACE" | awk '/Schemes:/{f=1;next} f&&NF{print ${'$'}1; exit}')
+              xcodebuild -workspace "${'$'}WORKSPACE" -scheme "${'$'}SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build ${'$'}SIGN_ARGS
             else
-              SCHEME=$(xcodebuild -list -project "$PROJECT" | awk '/Schemes:/{f=1;next} f&&NF{print $1; exit}')
-              xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build $SIGN_ARGS
+              SCHEME=${'$'}(xcodebuild -list -project "${'$'}PROJECT" | awk '/Schemes:/{f=1;next} f&&NF{print ${'$'}1; exit}')
+              xcodebuild -project "${'$'}PROJECT" -scheme "${'$'}SCHEME" -configuration Release -sdk iphoneos -derivedDataPath build ${'$'}SIGN_ARGS
             fi
-            APP=$(find build -name "*.app" 2>/dev/null | head -1)
-            if [ -n "$APP" ]; then
-              mkdir -p Payload && cp -r "$APP" Payload/ && zip -r out/app.ipa Payload
+            APP=${'$'}(find build -name "*.app" 2>/dev/null | head -1)
+            if [ -n "${'$'}APP" ]; then
+              mkdir -p Payload && cp -r "${'$'}APP" Payload/ && zip -r out/app.ipa Payload
             fi
           else
             echo "No iOS project found"
             exit 1
           fi
 
-          if [ -z "$(ls out/*.ipa 2>/dev/null)" ]; then
-            APP=$(find . -name "*.app" 2>/dev/null | head -1)
-            if [ -n "$APP" ]; then
-              ditto -c -k --keepParent "$APP" out/app-bundle.zip || zip -r out/app-bundle.zip "$APP"
+          if [ -z "${'$'}(ls out/*.ipa 2>/dev/null)" ]; then
+            APP=${'$'}(find . -name "*.app" 2>/dev/null | head -1)
+            if [ -n "${'$'}APP" ]; then
+              ditto -c -k --keepParent "${'$'}APP" out/app-bundle.zip || zip -r out/app-bundle.zip "${'$'}APP"
             else
               echo "Build produced no IPA/app"
               exit 1
@@ -545,33 +545,33 @@ jobs:
           bundler-cache: true
       - name: Install Apple cert (optional secrets)
         env:
-          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
-          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
-          KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD || 'autobot-temp' }}
+          IOS_CERTIFICATE_BASE64: ${'$'}{{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${'$'}{{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISION_PROFILE_BASE64: ${'$'}{{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${'$'}{{ secrets.IOS_KEYCHAIN_PASSWORD || 'autobot-temp' }}
         run: |
-          if [ -z "$IOS_CERTIFICATE_BASE64" ]; then echo "No cert secrets"; exit 0; fi
-          CERT=$RUNNER_TEMP/cert.p12
-          PP=$RUNNER_TEMP/profile.mobileprovision
-          KC=$RUNNER_TEMP/signing.keychain-db
-          echo -n "$IOS_CERTIFICATE_BASE64" | base64 --decode -o $CERT
-          echo -n "$IOS_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KC
-          security set-keychain-settings -lut 21600 $KC
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KC
-          security import $CERT -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KC
-          security list-keychain -d user -s $KC
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KC
+          if [ -z "${'$'}IOS_CERTIFICATE_BASE64" ]; then echo "No cert secrets"; exit 0; fi
+          CERT=${'$'}RUNNER_TEMP/cert.p12
+          PP=${'$'}RUNNER_TEMP/profile.mobileprovision
+          KC=${'$'}RUNNER_TEMP/signing.keychain-db
+          echo -n "${'$'}IOS_CERTIFICATE_BASE64" | base64 --decode -o ${'$'}CERT
+          echo -n "${'$'}IOS_PROVISION_PROFILE_BASE64" | base64 --decode -o ${'$'}PP
+          security create-keychain -p "${'$'}KEYCHAIN_PASSWORD" ${'$'}KC
+          security set-keychain-settings -lut 21600 ${'$'}KC
+          security unlock-keychain -p "${'$'}KEYCHAIN_PASSWORD" ${'$'}KC
+          security import ${'$'}CERT -P "${'$'}IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k ${'$'}KC
+          security list-keychain -d user -s ${'$'}KC
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${'$'}KEYCHAIN_PASSWORD" ${'$'}KC
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin <<< $(security cms -D -i $PP))
-          cp $PP ~/Library/MobileDevice/Provisioning\ Profiles/$UUID.mobileprovision
+          UUID=${'$'}(/usr/libexec/PlistBuddy -c 'Print UUID' /dev/stdin <<< ${'$'}(security cms -D -i ${'$'}PP))
+          cp ${'$'}PP ~/Library/MobileDevice/Provisioning\ Profiles/${'$'}UUID.mobileprovision
       - name: Fastlane build
         env:
-          IOS_SCHEME: ${{ secrets.IOS_SCHEME || 'Runner' }}
-          IOS_EXPORT_METHOD: ${{ secrets.IOS_EXPORT_METHOD || 'app-store' }}
-          APP_STORE_CONNECT_API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
-          APP_STORE_CONNECT_API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
-          APP_STORE_CONNECT_API_KEY_PATH: ${{ secrets.APP_STORE_CONNECT_API_KEY_PATH }}
+          IOS_SCHEME: ${'$'}{{ secrets.IOS_SCHEME || 'Runner' }}
+          IOS_EXPORT_METHOD: ${'$'}{{ secrets.IOS_EXPORT_METHOD || 'app-store' }}
+          APP_STORE_CONNECT_API_KEY_ID: ${'$'}{{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          APP_STORE_CONNECT_API_ISSUER_ID: ${'$'}{{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          APP_STORE_CONNECT_API_KEY_PATH: ${'$'}{{ secrets.APP_STORE_CONNECT_API_KEY_PATH }}
         run: |
           gem install bundler
           bundle install

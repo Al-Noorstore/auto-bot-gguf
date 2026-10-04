@@ -657,8 +657,7 @@ class MainActivity : AppCompatActivity() {
             val hdr = waJs(t, """(function(){var h=document.querySelector('#main header')||document.querySelector('header');return (h&&h.innerText)||''})()""")
             val hdrClean = hdr.replace("\"", "").lowercase()
             if (cSafe.lowercase().length >= 2 && !hdrClean.contains(cSafe.lowercase().take(minOf(8, cSafe.length)))) {
-                return "⛔ Safety: open chat header mein '$contact' confirm nahi hua — message NAHI bheja. Sahi naam se dobara try karo.
-Header: ${hdr.take(80)}"
+                return "⛔ Safety: open chat header mein '$contact' confirm nahi hua — message NAHI bheja. Sahi naam se dobara try karo.\nHeader: ${hdr.take(80)}"
             }
             val s3 = waJs(t, """(function(){var e=document.querySelector('footer div[contenteditable=true]');if(!e)return 'nobox';e.focus();e.textContent='""" + mSafe + """';e.dispatchEvent(new InputEvent('input',{bubbles:true}));var b=document.querySelector('footer button[aria-label*=end], span[data-icon=send], span[data-icon="send"]');if(!b)return 'nosend';(b.closest('button')||b).click();return 'sent'})()""")
             when {
