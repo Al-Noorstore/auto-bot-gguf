@@ -17,10 +17,12 @@ object GgufEngine {
 
     private const val PREF = "autobot"
     const val ASSET_MODEL = "models/smollm2-135m-instruct-q4_k_m.gguf"  // bundled default — sab phones
-    private const val SYS = "You are Auto Bot, a helpful phone assistant. " +
-        "Understand English, Urdu, Roman Urdu, Hindi, Hinglish. " +
-        "Answer in the user's language, briefly (2-4 lines unless asked for detail). " +
-        "You run fully offline on the user's phone."
+    private const val SYS = "You are Auto Bot. Answer ONLY the user request. " +
+        "Languages: English, Urdu, Roman Urdu, Hindi, Hinglish. " +
+        "Rules: stay on topic; no random names; no repeating words; " +
+        "if user asks for a story, write a short clear story (8-12 lines); " +
+        "if user asks to save a number or open an app, say you need the app command — do not invent. " +
+        "Be brief and useful. Never output nonsense loops."
 
     @Volatile private var loadedPath: String? = null
     @Volatile private var loading = false
@@ -378,6 +380,21 @@ object GgufEngine {
      * Offline jawab. null = nahi bana (caller API/fallback).
      * BLOCKING — background thread se bulao.
      */
+    private fun isGarbageAnswer(s: String): Boolean {
+        val t = s.trim()
+        if (t.length < 2) return true
+        // same word repeated many times
+        val words = t.split(Regex("\\s+|[-–—,]")).filter { it.length > 2 }
+        if (words.size >= 8) {
+            val freq = words.groupingBy { it.lowercase() }.eachCount()
+            val top = freq.values.maxOrNull() ?: 0
+            if (top >= words.size * 0.4) return true
+        }
+        // hyphen spam like Samaa-Samaa-Shari
+        if (t.count { it == '-' } >= 8 && t.length < 400) return true
+        return false
+    }
+
     fun ask(ctx: Context, question: String): String? {
         if (!enabled(ctx) || !LlamaBridge.available) {
             lastError = if (!LlamaBridge.available) "native_lib_missing" else "engine_off"
@@ -420,7 +437,12 @@ object GgufEngine {
             val t0 = System.currentTimeMillis()
             // Low-RAM: shorter answers
             val maxTok = if (isLowRam(ctx)) 120 else 220
-            var ans = LlamaBridge.generate(prompt, maxTokens = maxTok, temp = 0.7f, topP = 0.9f, topK = 40).trim()
+            var ans = LlamaBridge.generate(prompt, maxTokens = maxTok, temp = 0.35f, topP = 0.85f, topK = 30).trim()
+            // garbage / loop filter (small models sometimes repeat tokens)
+            if (isGarbageAnswer(ans)) {
+                lastError = "garbage_output"
+                return null
+            }
             ans = ans.substringBefore("<|im_end|>")
                 .substringBefore("<|endoftext|>")
                 .substringBefore("<|im_start|>")

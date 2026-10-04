@@ -314,6 +314,10 @@ class MainActivity : AppCompatActivity() {
     // ---------- Python 3.11 engine (APK ke andar bundled) ----------
     private var pipDir: String = ""
     private var currentProject: File = File("")
+    private var pendingCallPhone: String? = null
+    private var pendingCallName: String? = null
+    private var pendingCallKind: String = "sim" // sim | wa | wavideo
+
 
     private fun runPython(code: String, fromChat: Boolean = false) {
         appendTerm("\n>>> $code\n")
@@ -519,6 +523,30 @@ class MainActivity : AppCompatActivity() {
         appendTermTo(termActive(), text)
     }
 
+    /** Temporary Thinking… row — answer aate hi HTML se remove */
+    private fun showThinking() {
+        runOnUiThread {
+            try {
+                webView.evaluateJavascript(
+                    "(function(){if(typeof typing==='function')typing();})()",
+                    null
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun thinkingStatus(msg: String) {
+        runOnUiThread {
+            try {
+                webView.evaluateJavascript(
+                    "(function(){var el=document.querySelector('#typing .th-text'); if(el) el.textContent=" +
+                        org.json.JSONObject.quote(msg) + "; else if(typeof typing==='function')typing();})()",
+                    null
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
     private fun chatReply(text: String) {
         // JS bridge WebView thread par hota hai; evaluateJavascript UI thread par zaroori hai.
         runOnUiThread {
@@ -629,7 +657,8 @@ class MainActivity : AppCompatActivity() {
             val hdr = waJs(t, """(function(){var h=document.querySelector('#main header')||document.querySelector('header');return (h&&h.innerText)||''})()""")
             val hdrClean = hdr.replace("\"", "").lowercase()
             if (cSafe.lowercase().length >= 2 && !hdrClean.contains(cSafe.lowercase().take(minOf(8, cSafe.length)))) {
-                return "⛔ Safety: open chat header mein '$contact' confirm nahi hua — message NAHI bheja. Sahi naam se dobara try karo.\nHeader: ${hdr.take(80)}"
+                return "⛔ Safety: open chat header mein '$contact' confirm nahi hua — message NAHI bheja. Sahi naam se dobara try karo.
+Header: ${hdr.take(80)}"
             }
             val s3 = waJs(t, """(function(){var e=document.querySelector('footer div[contenteditable=true]');if(!e)return 'nobox';e.focus();e.textContent='""" + mSafe + """';e.dispatchEvent(new InputEvent('input',{bubbles:true}));var b=document.querySelector('footer button[aria-label*=end], span[data-icon=send], span[data-icon="send"]');if(!b)return 'nosend';(b.closest('button')||b).click();return 'sent'})()""")
             when {
@@ -878,18 +907,91 @@ class MainActivity : AppCompatActivity() {
         if (n.contains(".") && !n.contains(" ")) return n
         val pm = packageManager
         val q = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        var partial: String? = null
+        val query = n.replace(Regex("\\s+"), " ").trim()
+        val compact = query.replace(" ", "")
+        var best: String? = null
+        var bestScore = 0
         for (ri in pm.queryIntentActivities(q, 0)) {
-            val lbl = ri.loadLabel(pm).toString().lowercase()
+            val lbl = ri.loadLabel(pm).toString().lowercase().trim()
+            val lblC = lbl.replace(" ", "")
             val pkg = ri.activityInfo.packageName
-            if (lbl == n) return pkg
-            if (partial == null && (lbl.contains(n) || (lbl.length >= 3 && n.contains(lbl)))) partial = pkg
+            var score = 0
+            if (lbl == query || lblC == compact) score = 100
+            else if (lbl.startsWith(query) || lblC.startsWith(compact)) score = 80
+            else if (lbl.contains(query) || lblC.contains(compact)) score = 60
+            else if (query.length >= 3 && (query.contains(lbl) || compact.contains(lblC))) score = 40
+            if (score > bestScore) { bestScore = score; best = pkg }
         }
-        return partial
+        return if (bestScore >= 40) best else null
+    }
+
+
+    /** Phonebook + MemoryVault clients + OfflineBrain contacts */
+    private fun resolveCallTargets(query: String): List<Pair<String, String>> {
+        val q = query.trim()
+        if (q.length < 2) return emptyList()
+        val out = linkedMapOf<String, String>() // phone -> name
+        try {
+            Phonebook.findByName(this, q, 12).forEach { out[it.number] = it.name }
+        } catch (_: Exception) {}
+        try {
+            MemoryVault.findByName(this, q).forEach {
+                if (it.phone.isNotBlank()) out[it.phone.filter { ch -> ch.isDigit() || ch == '+' }] = it.name
+            }
+        } catch (_: Exception) {}
+        // relation-style: "bai" / "bhai" → all names containing bai/bhai
+        val low = q.lowercase()
+        if (low in listOf("bai", "bhai", "brother") || low.endsWith(" bai") || low.endsWith(" bhai")) {
+            try {
+                Phonebook.all(this, 200).forEach { e ->
+                    val n = e.name.lowercase()
+                    if (n.contains("bai") || n.contains("bhai") || n.contains("brother")) {
+                        if (low == "bai" || low == "bhai" || low == "brother" || n.contains(low)) {
+                            out[e.number] = e.name
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        // exact-ish: prefer names that contain full query as whole
+        val list = out.map { (ph, nm) -> nm to ph }
+        val exact = list.filter { it.first.equals(q, true) }
+        if (exact.isNotEmpty()) return exact
+        val starts = list.filter { it.first.lowercase().startsWith(q.lowercase()) }
+        if (starts.size == 1) return starts
+        // unique contains
+        val contains = list.filter { it.first.lowercase().contains(q.lowercase()) }
+        if (contains.size == 1) return contains
+        return if (contains.isNotEmpty()) contains else list
+    }
+
+    private fun startSmartCall(name: String, phone: String, forcedSim: Int?) {
+        val slot = forcedSim ?: SimDialer.defaultSlot(this).takeIf { it >= 0 }
+        if (slot != null) {
+            chatReply(SimDialer.placeCall(this, phone, slot) + "\n👤 $name • $phone")
+            return
+        }
+        // ask SIM — chat buttons + text/mic
+        pendingCallPhone = phone
+        pendingCallName = name
+        pendingCallKind = "sim"
+        val sims = SimDialer.listSims(this)
+        val s1 = sims.firstOrNull { it.slot == 0 }?.label ?: "SIM 1"
+        val s2 = sims.firstOrNull { it.slot == 1 }?.label ?: "SIM 2"
+        chatReplyEx(
+            "📞 **$name**\n📱 $phone\n\nKaun si SIM se call?",
+            org.json.JSONArray()
+                .put(org.json.JSONObject().put("label", "📱 $s1").put("action", "simcall").put("phone", "0|$phone"))
+                .put(org.json.JSONObject().put("label", "📱 $s2").put("action", "simcall").put("phone", "1|$phone"))
+                .put(org.json.JSONObject().put("label", "❎ Cancel").put("action", "simcancel").put("phone", ""))
+                .toString()
+        )
     }
 
     private fun openAppByName(name: String): String {
-        val n = name.trim().lowercase()
+        val raw = name.trim().lowercase()
+        val n = raw.replace(Regex("\\s+"), " ").trim()
+        val compact = n.replace(" ", "")
         val pkgMap = mapOf(
             "whatsapp" to "com.whatsapp", "youtube" to "com.google.android.youtube",
             "chrome" to "com.android.chrome", "browser" to "com.android.chrome",
@@ -898,19 +1000,32 @@ class MainActivity : AppCompatActivity() {
             "play store" to "com.android.vending", "photos" to "com.google.android.apps.photos",
             "gallery" to "com.google.android.apps.photos", "camera" to "com.android.camera2",
             "facebook" to "com.facebook.katana", "instagram" to "com.instagram.android",
-            "tiktok" to "com.zhiliaoapp.musically", "spotify" to "com.spotify.music",
-            "telegram" to "org.telegram.messenger", "settings" to "com.android.settings"
+            "tiktok" to "com.zhiliaoapp.musically", "tik tok" to "com.zhiliaoapp.musically",
+            "spotify" to "com.spotify.music", "telegram" to "org.telegram.messenger",
+            "settings" to "com.android.settings",
+            "notepad" to "com.miui.notes", "notes" to "com.miui.notes", "note" to "com.miui.notes",
+            "note pad" to "com.miui.notes", "notebook" to "com.miui.notes"
         )
-        var pkg: String? = pkgMap[n]
-        // map wala package phone mein na ho (e.g. camera) to label se dhoondo
+        // also try other common note packages via label search
+        var pkg: String? = pkgMap[n] ?: pkgMap[compact]
         if (pkg != null && packageManager.getLaunchIntentForPackage(pkg) == null) pkg = null
-        if (pkg == null) pkg = findLaunchPackage(n)
+        // alternate TikTok package
+        if (pkg == null && (compact == "tiktok" || n == "tik tok")) {
+            for (alt in listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill", "com.tiktok.lite.go")) {
+                if (packageManager.getLaunchIntentForPackage(alt) != null) { pkg = alt; break }
+            }
+        }
+        if (pkg == null) pkg = findLaunchPackage(n) ?: findLaunchPackage(compact)
+        if (pkg == null && (compact.contains("note") || n.contains("note"))) {
+            pkg = findLaunchPackage("notes") ?: findLaunchPackage("note") ?: findLaunchPackage("notepad")
+        }
         if (pkg == null) return "❌ App nahi mili: $name. Spelling check karo ya package naam do (e.g. open com.whatsapp)."
         return try {
             val intent = packageManager.getLaunchIntentForPackage(pkg) ?: return "❌ App installed nahi hai: $pkg"
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(intent)
-            "✅ App khul gayi: $name"
+            val label = try { packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString() } catch (_: Exception) { name }
+            "✅ Opening $label."
         } catch (e: Exception) { "❌ App open fail: " + e.message }
     }
 
@@ -2095,6 +2210,308 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+
+        
+        // ---------- v3.9.5: project → GitHub push / APK / AAB (active project only) ----------
+        if (low == "github push" || low.startsWith("github push ") || low == "only push" || low == "sirf push") {
+            val token = TokenVault.get(this, "github")
+            if (token == null) { chatReply("🔑 token save github ghp_xxxx (repo + workflow)"); return true }
+            if (low.startsWith("github push zip") || low.startsWith("push zip")) { /* handled below */ }
+            else {
+                val dir = GitHubSync.activeProjectDir(this) ?: if (currentProject.exists()) currentProject else null
+                if (dir == null) { chatReply("❌ project open <name> pehle"); return true }
+                val repoName = GitHubSync.safeRepoName(
+                    low.removePrefix("github push").trim().ifBlank { dir.name }.split(" ").first()
+                )
+                chatReply("📤 Sirf push — project: ${dir.name} → $repoName")
+                Thread {
+                    val (ok, full) = GitHubSync.ensureRepo(token, repoName, true)
+                    if (!ok) { runOnUiThread { chatReply(full) }; return@Thread }
+                    val pr = GitHubSync.pushFolder(token, full, dir)
+                    if (pr.fail > 0) GitHubSync.setPendingError(this, pr.message)
+                    runOnUiThread {
+                        chatReply(pr.message + if (pr.fail > 0) "\n\n⚠️ Errors hain. Fix chahiye? *haan fix* / *nahi*" else "")
+                    }
+                }.start()
+                return true
+            }
+        }
+
+
+
+
+        if (low == "fastlane" || low == "fastlane help" || low == "fastlane setup") {
+            chatReply("""🚀 *Fastlane automation (GitHub Actions)*
+
+*Setup files bot push karega:*
+• Gemfile
+• fastlane/Fastfile
+• fastlane/Appfile
+• .github/workflows/fastlane-ios.yml ya fastlane-android.yml
+
+*Commands*
+```
+fastlane ios     — iOS Fastlane + build
+fastlane android — Android Fastlane + APK
+fastlane setup ios
+fastlane setup android
+```
+
+*GitHub Secrets (optional)*
+iOS: IOS_CERTIFICATE_BASE64, IOS_CERTIFICATE_PASSWORD, IOS_PROVISION_PROFILE_BASE64, IOS_TEAM_ID
+iOS TestFlight: APP_STORE_CONNECT_API_KEY_ID, APP_STORE_CONNECT_API_ISSUER_ID
+Android Play: PLAY_STORE_JSON_KEY (service account JSON)
+
+*Flow*
+project open myapp → token save github ghp_… → fastlane ios / fastlane android
+""")
+            return true
+        }
+        if (low == "fastlane ios" || low == "fastlane setup ios" || low.startsWith("fastlane ios") ||
+            low == "fastlane android" || low == "fastlane setup android" || low.startsWith("fastlane android")) {
+            val token = TokenVault.get(this, "github")
+            if (token == null) { chatReply("🔑 token save github ghp_xxxx (repo + workflow)"); return true }
+            val dir = GitHubSync.activeProjectDir(this) ?: if (currentProject.exists()) currentProject else null
+            if (dir == null) { chatReply("❌ project open <name>"); return true }
+            val platform = if (low.contains("ios")) "ios" else "android"
+            val repoName = GitHubSync.safeRepoName(dir.name)
+            chatReply("🚀 Fastlane ($platform) — project ${dir.name} → GitHub...")
+            Thread {
+                val (ok, full) = GitHubSync.ensureRepo(token, repoName, true)
+                if (!ok) { runOnUiThread { chatReply(full) }; return@Thread }
+                val pr = GitHubSync.pushFolder(token, full, dir)
+                val fl = GitHubSync.ensureFastlane(token, full, platform)
+                val tr = GitHubSync.triggerFastlane(token, full, platform)
+                ProjectStore.setLastTask(this, "fastlane:$platform:$full")
+                runOnUiThread {
+                    chatReply("${pr.message}\n\n$fl\n\n$tr\n\n⏳ Actions: https://github.com/$full/actions\nDownload: apk download / ipa download")
+                }
+            }.start()
+            return true
+        }
+
+        if (low == "ios signing" || low == "ios certificate" || low == "apple signing" ||
+            low == "ipa signing" || low.contains("signing setup") || low == "ios help") {
+            chatReply("""🍎 *iOS / Apple signing setup*
+
+*1. Apple Developer (developer.apple.com)*
+• Membership active
+• Certificates → create *Apple Distribution* (or Development) → download .cer → Keychain → export *Login* cert as .p12
+• Profiles → App Store / Ad Hoc → select App ID + cert → download .mobileprovision
+
+*2. Base64 (Mac Terminal)*
+```
+base64 -i Certificates.p12 | pbcopy
+base64 -i profile.mobileprovision | pbcopy
+```
+
+*3. GitHub repo → Settings → Secrets → Actions* — add:
+• `IOS_CERTIFICATE_BASE64` = p12 base64
+• `IOS_CERTIFICATE_PASSWORD` = p12 password
+• `IOS_PROVISION_PROFILE_BASE64` = mobileprovision base64
+• `IOS_TEAM_ID` = Team ID (optional)
+• `IOS_KEYCHAIN_PASSWORD` = any temp password (optional)
+
+*4. Auto Bot*
+```
+project open myios
+token save github ghp_...
+ipa banao
+ipa download
+```
+
+⚠️ Secrets ke baghair: unsigned IPA / build-only (device install limited).
+✅ Secrets ke sath: signed IPA (Ad Hoc / distribution profile ke mutabiq).
+""")
+            return true
+        }
+
+        if (low == "ipa banao" || low == "ios banao" || low == "iphone app banao" ||
+            low.startsWith("ipa banao ") || low.startsWith("ios banao ") ||
+            low.contains("project ka ipa") || low.contains("iphone app") ||
+            low.startsWith("github ipa") || low.startsWith("github ios")) {
+            val token = TokenVault.get(this, "github")
+            if (token == null) { chatReply("🔑 token save github ghp_xxxx (repo + workflow)"); return true }
+            val dir = GitHubSync.activeProjectDir(this) ?: if (currentProject.exists()) currentProject else null
+            if (dir == null) { chatReply("❌ Active project: project open <name>"); return true }
+            val repoName = GitHubSync.safeRepoName(dir.name)
+            chatReply("🍎 Project: ${dir.absolutePath}\n→ GitHub + iOS IPA (macOS Actions)...\n(Xcode / Flutter / React Native)\nSigning: GitHub Secrets (IOS_CERTIFICATE_*) — detail: ios signing")
+            Thread {
+                val (ok, full) = GitHubSync.ensureRepo(token, repoName, true)
+                if (!ok) { runOnUiThread { chatReply(full) }; return@Thread }
+                val pr = GitHubSync.pushFolder(token, full, dir)
+                if (pr.fail > 0) {
+                    GitHubSync.setPendingError(this, pr.message)
+                    runOnUiThread { chatReply(pr.message + "\n\n⛔ *haan fix* ya *build phir bhi*") }
+                    return@Thread
+                }
+                val wf = GitHubSync.ensureIosWorkflow(token, full)
+                val tr = GitHubSync.triggerIosWorkflow(token, full)
+                ProjectStore.setLastTask(this, "github-ios:$full")
+                runOnUiThread {
+                    chatReply("${pr.message}\n$wf\n$tr\n\n⏳ 10–25 min baad:\n• ipa download\nActions: https://github.com/$full/actions")
+                }
+            }.start()
+            return true
+        }
+
+        if (low == "exe banao" || low == "exe bana" || low.startsWith("exe banao ") ||
+            low.contains("project ka exe") || low == "mere project ka exe banao" ||
+            low.startsWith("github exe") || low.contains("windows exe")) {
+            val token = TokenVault.get(this, "github")
+            if (token == null) { chatReply("🔑 token save github ghp_xxxx (repo + workflow)"); return true }
+            val dir = GitHubSync.activeProjectDir(this) ?: if (currentProject.exists()) currentProject else null
+            if (dir == null) { chatReply("❌ Active project: project open <name>"); return true }
+            val repoName = GitHubSync.safeRepoName(dir.name)
+            chatReply("💻 Project: ${dir.absolutePath}\n→ GitHub + Windows EXE Actions build...\n(Electron / .NET / Python / Go)")
+            Thread {
+                val (ok, full) = GitHubSync.ensureRepo(token, repoName, true)
+                if (!ok) { runOnUiThread { chatReply(full) }; return@Thread }
+                val pr = GitHubSync.pushFolder(token, full, dir)
+                if (pr.fail > 0) {
+                    GitHubSync.setPendingError(this, pr.message)
+                    runOnUiThread {
+                        chatReply(pr.message + "\n\n⛔ Errors. *haan fix*  ya  *build phir bhi*")
+                    }
+                    return@Thread
+                }
+                val wf = GitHubSync.ensureWindowsWorkflow(token, full)
+                val tr = GitHubSync.triggerWindowsWorkflow(token, full)
+                ProjectStore.setLastTask(this, "github-exe:$full")
+                runOnUiThread {
+                    chatReply("${pr.message}\n$wf\n$tr\n\n⏳ 5–20 min baad:\n• exe download\nActions: https://github.com/$full/actions")
+                }
+            }.start()
+            return true
+        }
+
+        if (low == "apk banao" || low == "apk bana" || low.startsWith("apk banao ") ||
+            low.contains("project ka apk") || low == "mere project ka apk banao" ||
+            low.startsWith("github apk") || low == "aab banao" || low.startsWith("aab banao") ||
+            low.contains("project ka aab") || low.startsWith("github aab")) {
+            val token = TokenVault.get(this, "github")
+            if (token == null) { chatReply("🔑 token save github ghp_xxxx (repo + workflow)"); return true }
+            val dir = GitHubSync.activeProjectDir(this) ?: if (currentProject.exists()) currentProject else null
+            if (dir == null) { chatReply("❌ Active project: project open <name>"); return true }
+            val wantAab = low.contains("aab")
+            val wantExe = low.contains("exe")
+            val wantIpa = low.contains("ipa") || low.contains("ios")
+            val repoName = GitHubSync.safeRepoName(dir.name)
+            chatReply("🐙 Project: ${dir.absolutePath}\n→ GitHub + ${if (wantAab) "AAB" else "APK"} build...")
+            Thread {
+                val (ok, full) = GitHubSync.ensureRepo(token, repoName, true)
+                if (!ok) { runOnUiThread { chatReply(full) }; return@Thread }
+                val pr = GitHubSync.pushFolder(token, full, dir)
+                if (pr.fail > 0) {
+                    GitHubSync.setPendingError(this, pr.message)
+                    runOnUiThread {
+                        chatReply(pr.message + "\n\n⛔ Build se pehle errors fix? *haan fix*  ya  phir bhi build: *build phir bhi*")
+                    }
+                    return@Thread
+                }
+                val wf = GitHubSync.ensureAndroidWorkflow(token, full, withAab = wantAab)
+                val tr = GitHubSync.triggerWorkflow(token, full)
+                ProjectStore.setLastTask(this, "github:$full")
+                runOnUiThread {
+                    chatReply("${pr.message}\n$wf\n$tr\n\n⏳ 5–15 min baad:\n• apk download\n• aab download\nActions: https://github.com/$full/actions")
+                }
+            }.start()
+            return true
+        }
+        if (low == "build phir bhi" || low == "phir bhi build") {
+            val token = TokenVault.get(this, "github") ?: run { chatReply("🔑 token missing"); return true }
+            val dir = GitHubSync.activeProjectDir(this) ?: run { chatReply("❌ no project"); return true }
+            val full = "${GitHubSync.login(token)}/${GitHubSync.safeRepoName(dir.name)}"
+            chatReply("▶️ Workflow dobara...")
+            Thread {
+                GitHubSync.ensureAndroidWorkflow(token, full, true)
+                val tr = GitHubSync.triggerWorkflow(token, full)
+                runOnUiThread { chatReply(tr) }
+            }.start()
+            return true
+        }
+        if (low == "haan fix" || low == "fix karo" || low == "error fix") {
+            val err = GitHubSync.getPendingError(this)
+            if (err.isNullOrBlank()) { chatReply("Koi pending GitHub error nahi."); return true }
+            chatReply("🛠 Error report (approval ke baad aap changes maang sakte ho):\n\n$err\n\nAb bolo kya change karna hai, misal:\ncode MainActivity.kt | ...\nya detail likho — main us file mein edit suggest/apply karunga.")
+            return true
+        }
+        if (low == "apk download" || low == "aab download" || low == "exe download" || low == "ipa download" || low == "ios download" ||
+            low.startsWith("apk download") || low.startsWith("aab download") || low.startsWith("exe download") || low.startsWith("ipa download") ||
+            low == "download apk" || low == "download aab" || low == "download exe" || low == "download ipa") {
+            val token = TokenVault.get(this, "github")
+            if (token == null) { chatReply("🔑 token save github ..."); return true }
+            val dir = GitHubSync.activeProjectDir(this)
+            val repoName = GitHubSync.safeRepoName(dir?.name ?: "app")
+            val user = GitHubSync.login(token)
+            if (user == null) { chatReply("❌ GitHub login fail"); return true }
+            val full = "$user/$repoName"
+            val wantAab = low.contains("aab")
+            val wantExe = low.contains("exe")
+            val wantIpa = low.contains("ipa") || low.contains("ios")
+            chatReply("📥 GitHub se ${when { wantIpa -> "IPA"; wantExe -> "EXE"; wantAab -> "AAB"; else -> "APK" }} artifact dhoondh raha hoon...")
+            Thread {
+                val arts = GitHubSync.latestArtifacts(token, full)
+                val match = arts.firstOrNull {
+                    val n = it.first.lowercase()
+                    when {
+                        wantIpa -> n.contains("ipa") || n.contains("ios")
+                        wantExe -> n.contains("exe") || n.contains("windows")
+                        wantAab -> n.contains("aab") || n.contains("bundle")
+                        else -> n.contains("apk") || n.contains("debug") || n.contains("app")
+                    }
+                } ?: arts.firstOrNull()
+                if (match == null) {
+                    runOnUiThread { chatReply("❌ Artifact nahi — pehle build complete ho (Actions). Phir dobara apk download") }
+                    return@Thread
+                }
+                val zip = File(getExternalFilesDir(null), "images/artifact_${match.second}.zip")
+                val dl = GitHubSync.downloadArtifactZip(token, match.third, zip)
+                if (dl.startsWith("❌")) { runOnUiThread { chatReply(dl) }; return@Thread }
+                val outDir = File(getExternalFilesDir(null), "images/builds").apply { mkdirs() }
+                val files = GitHubSync.extractBuildProduct(zip, outDir)
+                if (files.isEmpty()) {
+                    runOnUiThread { chatReply("⚠️ Zip mila lekin andar .apk/.aab nahi.\n$dl") }
+                    return@Thread
+                }
+                runOnUiThread {
+                    for (f in files) {
+                        chatReplyEx(
+                            "📦 ${f.name} (${f.length() / 1024} KB)\n${f.absolutePath}",
+                            org.json.JSONArray().put(
+                                org.json.JSONObject()
+                                    .put("label", "⬇️ Download ${f.name}")
+                                    .put("action", "dlfile")
+                                    .put("phone", f.absolutePath)
+                            ).toString()
+                        )
+                    }
+                }
+            }.start()
+            return true
+        }
+        if (low.startsWith("github push zip ") || low.startsWith("push zip ")) {
+            val token = TokenVault.get(this, "github")
+            if (token == null) { chatReply("🔑 token save github ghp_..."); return true }
+            val rest = msg.substringAfter("zip ").trim()
+            val parts = rest.split(Regex("\\s+"), limit = 2)
+            val zipPath = parts.getOrNull(0) ?: ""
+            val repoName = GitHubSync.safeRepoName(parts.getOrNull(1) ?: File(zipPath).nameWithoutExtension)
+            if (zipPath.isBlank()) { chatReply("Usage: github push zip /path/app.zip [repo]"); return true }
+            val dest = File(getExternalFilesDir(null), "work/_zip_" + repoName).apply { deleteRecursively(); mkdirs() }
+            chatReply("📦 Zip → GitHub ($repoName)...")
+            Thread {
+                val uz = GitHubSync.unzipTo(zipPath, dest)
+                if (uz.startsWith("❌")) { runOnUiThread { chatReply(uz) }; return@Thread }
+                val (ok, fullOrErr) = GitHubSync.ensureRepo(token, repoName, true)
+                if (!ok) { runOnUiThread { chatReply(fullOrErr) }; return@Thread }
+                val pr = GitHubSync.pushFolder(token, fullOrErr, dest)
+                if (pr.fail > 0) GitHubSync.setPendingError(this, pr.message)
+                runOnUiThread { chatReply("$uz\n${pr.message}") }
+            }.start()
+            return true
+        }
+
 // ---------- v3.0: GITHUB (token se) ----------
         if (low == "github" || low.startsWith("github ")) {
             val token = TokenVault.get(this, "github")
@@ -2415,6 +2832,151 @@ class MainActivity : AppCompatActivity() {
         }
         if (low.startsWith("pip install ")) { pipInstall(msg.substring(12).trim(), fromChat = true); chatReply("⏳ pip install chal raha hai..."); return true }
         if (low.startsWith("cmd ")) { runShell(msg.substring(4).trim(), fromChat = true); chatReply("⏳ Command chal raha hai terminal mein..."); return true }
+
+                
+        // ---------- v3.9.7: SIM dialer + smart call + WA call ----------
+        if (low == "sim dialer" || low == "sim settings" || low == "sim page" || low == "sim status") {
+            chatReply(SimDialer.statusText(this)); return true
+        }
+        if (low == "sim 1 default" || low == "default sim 1" || low == "always sim 1") {
+            SimDialer.setDefaultSlot(this, 0)
+            chatReply("✅ Default call SIM: **SIM 1**\nAb bina pooche SIM 1 se call (override: call Name sim 2)")
+            return true
+        }
+        if (low == "sim 2 default" || low == "default sim 2" || low == "always sim 2") {
+            SimDialer.setDefaultSlot(this, 1)
+            chatReply("✅ Default call SIM: **SIM 2**\nAb bina pooche SIM 2 se call (override: call Name sim 1)")
+            return true
+        }
+        if (low == "sim ask" || low == "default sim ask" || low == "sim poochho") {
+            SimDialer.setDefaultSlot(this, SimDialer.ASK)
+            chatReply("✅ Default: har call pe SIM 1 / SIM 2 poochhunga")
+            return true
+        }
+        // pending SIM choice after "call Name"
+        if (pendingCallPhone != null && (low == "sim 1" || low == "sim one" || low == "1" || low == "sim 2" || low == "sim two" || low == "2" || low == "cancel" || low.contains("sim 1") || low.contains("sim 2"))) {
+            if (low == "cancel" || low.contains("cancel") || low.contains("mat karo")) {
+                pendingCallPhone = null; pendingCallName = null
+                chatReply("❎ Call cancel.")
+                return true
+            }
+            val slot = SimDialer.parseSimFromText(low) ?: if (low.trim() == "1") 0 else if (low.trim() == "2") 1 else null
+            if (slot == null) {
+                chatReply("SIM 1, SIM 2, ya cancel likho / bolo")
+                return true
+            }
+            val ph = pendingCallPhone!!
+            val nm = pendingCallName ?: ph
+            pendingCallPhone = null; pendingCallName = null
+            val r = SimDialer.placeCall(this, ph, slot)
+            chatReply("$r\n👤 $nm")
+            return true
+        }
+        // WhatsApp voice / video call
+        if (low.startsWith("wa call ") || low.startsWith("whatsapp call ") || low.startsWith("wa voice ") ||
+            low.startsWith("wa video ") || low.startsWith("whatsapp video ") || low.startsWith("wa video call ") ||
+            (low.contains("whatsapp") && (low.contains("call") || low.contains("video"))) ||
+            (low.contains("wa ") && low.contains("call"))) {
+            val video = low.contains("video")
+            var target = msg
+            for (p in listOf("whatsapp video call", "wa video call", "whatsapp call", "wa voice call", "wa video", "wa call", "whatsapp video", "whatsapp")) {
+                if (low.startsWith(p)) { target = msg.substring(p.length).trim(); break }
+            }
+            target = target.replace(Regex("(?i)\\s*(ko|pr|pe|par)?\\s*(call|kro|karo|do)?\\s*$"), "").trim()
+            val phone = Regex("(\\+?\\d[\\d\\s-]{6,}\\d)").find(target)?.value?.replace(Regex("[\\s-]"), "")
+            val hits = if (phone != null) emptyList() else resolveCallTargets(target)
+            when {
+                phone != null -> chatReply(SimDialer.whatsAppCall(this, phone, video))
+                hits.size == 1 -> chatReply(SimDialer.whatsAppCall(this, hits[0].second, video) + "\n👤 ${hits[0].first}")
+                hits.size > 1 -> {
+                    val sb = StringBuilder("📞 Kai contacts — kis pe ${if (video) "video" else "WA"} call?\n")
+                    hits.take(8).forEachIndexed { i, p -> sb.append("${i + 1}. ${p.first} — ${p.second}\n") }
+                    chatReply(sb.toString() + "Number ya poora naam likho.")
+                }
+                else -> chatReply("❌ Contact/number nahi mila: $target\nMisal: wa call Rizwan Bai")
+            }
+            return true
+        }
+        // Normal SIM call by name/number
+        if (low.startsWith("call ") || low.endsWith(" ko call karo") || low.endsWith(" ko call kro") ||
+            low.endsWith(" ko call") || Regex("(?i).+\\s+ko\\s+call").containsMatchIn(low) ||
+            (low.contains("call") && !low.contains("whatsapp") && !low.startsWith("wa ") && !low.contains("github"))) {
+            var target = when {
+                low.startsWith("call ") -> msg.substring(5).trim()
+                else -> msg.replace(Regex("(?i)\\s*ko\\s*call\\s*(karo|kro|do)?\\s*$"), "").replace(Regex("(?i)^call\\s*"), "").trim()
+            }
+            val forcedSim = SimDialer.parseSimFromText(target)
+            target = target.replace(Regex("(?i)\\s*sim\\s*[12one twoekdo]+\\s*"), " ").trim()
+            val phoneDirect = Regex("(\\+?\\d[\\d\\s-]{6,}\\d)").find(target)?.value?.replace(Regex("[\\s-]"), "")
+            val hits = if (phoneDirect != null) listOf(target to phoneDirect) else resolveCallTargets(target)
+            when {
+                hits.isEmpty() && phoneDirect == null -> chatReply("❌ Koi match nahi: $target\ncontacts / client list dekho")
+                hits.size > 1 -> {
+                    val sb = StringBuilder("📞 Multiple matches — kis ko call?\n")
+                    hits.take(10).forEachIndexed { i, p -> sb.append("${i + 1}. ${p.first} — ${p.second}\n") }
+                    chatReply(sb.append("Poora naam ya number likho (e.g. call Rizwan Bai)").toString())
+                }
+                else -> {
+                    val (nm, ph) = if (phoneDirect != null) (phoneDirect to phoneDirect) else hits[0]
+                    startSmartCall(nm, ph, forcedSim)
+                }
+            }
+            return true
+        }
+
+
+        // ---------- v3.9.6: reliable commands BEFORE weak offline LLM ----------
+        // Contact / number save (do not send to SmolLM)
+        if (low.contains("number save") || low.contains("number save karo") ||
+            (low.contains("save karo") && Regex("\\d{7,}").containsMatchIn(low)) ||
+            low.startsWith("save number") || low.startsWith("contact save") ||
+            Regex("(yeh|ye|this)?\\s*number\\s*save").containsMatchIn(low)) {
+            val phone = Regex("(\\+?\\d[\\d\\s-]{6,}\\d)").find(msg)?.value?.replace(Regex("[\\s-]"), "") ?: ""
+            if (phone.length < 7) {
+                chatReply("📞 Number nahi mila. Misal:\nsave number 03221234567 Ali")
+                return true
+            }
+            val nameGuess = msg.replace(Regex("(?i)(yeh|ye|this)?\\s*number\\s*save\\s*(karo)?"), " ")
+                .replace(phone, " ").replace(Regex("\\d"), " ")
+                .replace(Regex("\\s+"), " ").trim()
+                .ifBlank { "Saved" }
+            try {
+                val intent = Intent(Intent.ACTION_INSERT).apply {
+                    type = android.provider.ContactsContract.Contacts.CONTENT_TYPE
+                    putExtra(android.provider.ContactsContract.Intents.Insert.PHONE, phone)
+                    putExtra(android.provider.ContactsContract.Intents.Insert.NAME, nameGuess)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+                chatReply("📇 Contacts app khuli — number: $phone\nNaam: $nameGuess\nSave dabao.")
+                if (SimDialer.defaultSlot(this) == SimDialer.ASK && !SimDialer.prefs(this).getBoolean("asked_sim_once", false)) {
+                    SimDialer.prefs(this).edit().putBoolean("asked_sim_once", true).apply()
+                    chatReply("📱 Calls kis SIM se karni hain by default?\n• sim 1 default\n• sim 2 default\n• sim ask (har baar poochho)")
+                }
+            } catch (e: Exception) {
+                chatReply("❌ Contact save UI nahi khuli: ${e.message}\nManually save: $phone")
+            }
+            return true
+        }
+        // Story / creative writing — better prompt path; avoid accessibility false match
+        if (Regex("(?i)(story|kahani|story\\s*likho|story\\s*lokho|write\\s*story|kahani\\s*likho)").containsMatchIn(low)
+            && !low.startsWith("open ") && !low.contains("accessibility")) {
+            val topic = msg.replace(Regex("(?i)(write\\s*)?(story|kahani)\\s*(likho|lokho|on|pr|pe)?"), " ")
+                .replace(Regex("\\s+"), " ").trim()
+                .ifBlank { "a kind teacher" }
+            showThinking()
+            Thread {
+                val q = "Write a short complete story (8-12 lines) about: $topic. " +
+                    "Use simple English or Roman Urdu if user mixed languages. No word loops. Clear beginning, middle, end."
+                val ans = try { AIBrain.ask(this@MainActivity, q) } catch (_: Exception) { null }
+                    ?: try { GgufEngine.ask(this@MainActivity, q) } catch (_: Exception) { null }
+                    ?: "❌ Story abhi nahi bani. API key add karo ya stronger model: model list"
+                runOnUiThread { chatReply(ans) }
+            }.start()
+            return true
+        }
+
+
         if (low.startsWith("open ")) {
             val target = msg.substring(5).trim()
             return if (target.startsWith("http")) { runOnUiThread { openUrl(target) }; chatReply("🌐 Khol diya: $target"); true }
@@ -2449,12 +3011,12 @@ class MainActivity : AppCompatActivity() {
 
     /** v3.6: AI jawab (GGUF offline sabse pehle) — 'ask' aur direct-chat dono isi se */
     private fun aiAnswer(q: String) {
-        chatReply("🤖 Soch raha hoon...")
+        showThinking()
         Thread {
             // v3.7: offline model ready nahi to progress messages ke saath pehle prepare karo
             try {
                 if (GgufEngine.enabled(this) && GgufEngine.modelPresent(this) && !GgufEngine.isReady() && !GgufEngine.isLoading())
-                    GgufEngine.prepare(this) { p -> runOnUiThread { chatReply(p) } }
+                    GgufEngine.prepare(this) { p -> thinkingStatus(p.take(80)) }
             } catch (_: Throwable) {}
             val ans = AIBrain.ask(this, q)
             runOnUiThread {
@@ -2538,10 +3100,26 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun simCall(payload: String) {
+            runOnUiThread {
+                // payload: "0|+92..." or "1|..."
+                val parts = payload.split("|", limit = 2)
+                val slot = parts.getOrNull(0)?.toIntOrNull() ?: 0
+                val ph = parts.getOrNull(1) ?: return@runOnUiThread
+                pendingCallPhone = null
+                pendingCallName = null
+                chatReply(SimDialer.placeCall(this@MainActivity, ph, slot))
+            }
+        }
+
+        @android.webkit.JavascriptInterface
         fun callNumber(phone: String) {
             runOnUiThread {
-                inputPhone.setText(phone)
-                autoCall()
+                try {
+                    startSmartCall(phone, phone, null)
+                } catch (_: Exception) {
+                    try { inputPhone.setText(phone); autoCall() } catch (_: Exception) {}
+                }
             }
         }
 
@@ -2607,6 +3185,38 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun startVoice() { runOnUiThread { startVoiceCommand() } }
+
+        @android.webkit.JavascriptInterface
+        fun openLocalFile(path: String) {
+            runOnUiThread {
+                try {
+                    val f = java.io.File(path)
+                    if (!f.isFile) { chatReply("❌ File nahi: $path"); return@runOnUiThread }
+                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                        this@MainActivity, packageName + ".fileprovider", f
+                    )
+                    val mime = when (f.extension.lowercase()) {
+                        "apk" -> "application/vnd.android.package-archive"
+                        "aab" -> "application/octet-stream"
+                        "exe" -> "application/vnd.microsoft.portable-executable"
+                        "ipa" -> "application/octet-stream"
+                        "png", "jpg", "jpeg", "webp" -> "image/*"
+                        "zip" -> "application/zip"
+                        else -> "*/*"
+                    }
+                    val i = Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    try { startActivity(i) } catch (_: Exception) {
+                        val send = Intent(Intent.ACTION_SEND).setType(mime)
+                            .putExtra(Intent.EXTRA_STREAM, uri)
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        startActivity(Intent.createChooser(send, "File"))
+                    }
+                    chatReply("📁 ${f.name} — open/share sheet")
+                } catch (e: Exception) { chatReply("❌ Open fail: ${e.message}") }
+            }
+        }
+
 
         @JavascriptInterface
         fun stopVoice() {

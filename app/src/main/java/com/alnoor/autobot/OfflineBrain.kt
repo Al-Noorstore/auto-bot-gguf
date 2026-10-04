@@ -92,7 +92,7 @@ object OfflineBrain {
         "daddy" to "abu", "papa" to "abu", "baba" to "abu",
         "ابو" to "abu", "والد" to "abu", "पापा" to "abu", "पिता" to "abu", "डैड" to "abu",
         // brother
-        "bhai" to "bhai", "bhaijaan" to "bhai", "bhaijan" to "bhai", "bhaiya" to "bhai",
+        "bhai" to "bhai", "bai" to "bhai", "bhaijaan" to "bhai", "bhaijan" to "bhai", "bhaiya" to "bhai",
         "bhaiyya" to "bhai", "bhayya" to "bhai", "brother" to "bhai",
         "भाई" to "bhai", "भैया" to "bhai", "بھائی" to "bhai",
         // sister

@@ -1,0 +1,181 @@
+package com.alnoor.autobot
+
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.telecom.PhoneAccountHandle
+import android.telecom.TelecomManager
+import android.telephony.SubscriptionManager
+import androidx.core.content.ContextCompat
+
+/**
+ * Dual-SIM default + place call on chosen slot.
+ * Pref: sim_default = 0 (SIM1), 1 (SIM2), -1 (ask each time)
+ */
+object SimDialer {
+
+    private const val PREF = "autobot_sim"
+    const val ASK = -1
+
+    data class SimInfo(val slot: Int, val label: String, val subId: Int)
+
+    fun prefs(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+
+    /** -1 = ask, 0 = SIM1, 1 = SIM2 */
+    fun defaultSlot(ctx: Context): Int = prefs(ctx).getInt("default_slot", ASK)
+
+    fun setDefaultSlot(ctx: Context, slot: Int) {
+        prefs(ctx).edit().putInt("default_slot", slot).apply()
+    }
+
+    fun defaultLabel(ctx: Context): String = when (val s = defaultSlot(ctx)) {
+        0 -> "SIM 1"
+        1 -> "SIM 2"
+        else -> "Har call pe poochho"
+    }
+
+    fun listSims(ctx: Context): List<SimInfo> {
+        val out = mutableListOf<SimInfo>()
+        try {
+            if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_PHONE_STATE)
+                != PackageManager.PERMISSION_GRANTED
+            ) {
+                return listOf(SimInfo(0, "SIM 1", -1), SimInfo(1, "SIM 2", -1))
+            }
+            val sm = ctx.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as? SubscriptionManager
+                ?: return listOf(SimInfo(0, "SIM 1", -1), SimInfo(1, "SIM 2", -1))
+            val list = if (Build.VERSION.SDK_INT >= 28) {
+                sm.activeSubscriptionInfoList
+            } else {
+                @Suppress("DEPRECATION")
+                sm.activeSubscriptionInfoList
+            } ?: emptyList()
+            list.forEachIndexed { i, info ->
+                val slot = info.simSlotIndex.coerceIn(0, 1)
+                val name = info.displayName?.toString()?.ifBlank { "SIM ${slot + 1}" } ?: "SIM ${slot + 1}"
+                val carrier = info.carrierName?.toString() ?: ""
+                val label = if (carrier.isNotBlank()) "SIM ${slot + 1} ($carrier)" else name
+                out.add(SimInfo(slot, label, info.subscriptionId))
+            }
+        } catch (_: Exception) {}
+        if (out.isEmpty()) {
+            out.add(SimInfo(0, "SIM 1", -1))
+            out.add(SimInfo(1, "SIM 2", -1))
+        }
+        return out.distinctBy { it.slot }.sortedBy { it.slot }
+    }
+
+    fun parseSimFromText(low: String): Int? {
+        val t = low.lowercase()
+        return when {
+            Regex("\\bsim\\s*1\\b|\\bsim\\s*one\\b|\\bsim\\s*ek\\b|\\bfirst\\s*sim\\b").containsMatchIn(t) -> 0
+            Regex("\\bsim\\s*2\\b|\\bsim\\s*two\\b|\\bsim\\s*do\\b|\\bsecond\\s*sim\\b").containsMatchIn(t) -> 1
+            else -> null
+        }
+    }
+
+    /**
+     * Place voice call. slot: 0/1 or null to use system default.
+     */
+    fun placeCall(ctx: Context, phone: String, slot: Int?): String {
+        val num = phone.filter { it.isDigit() || it == '+' }
+        if (num.length < 7) return "❌ Number short: $phone"
+        val uri = Uri.fromParts("tel", num, null)
+        return try {
+            if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CALL_PHONE)
+                == PackageManager.PERMISSION_GRANTED
+            ) {
+                val intent = Intent(Intent.ACTION_CALL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                val useSlot = slot ?: defaultSlot(ctx).takeIf { it >= 0 }
+                if (useSlot != null) {
+                    intent.putExtra("com.android.phone.extra.slot", useSlot)
+                    intent.putExtra("slot", useSlot)
+                    intent.putExtra("sim_slot", useSlot)
+                    // Android Telecom phone account
+                    tryAttachPhoneAccount(ctx, intent, useSlot)
+                }
+                ctx.startActivity(intent)
+                val simTxt = when (useSlot) {
+                    0 -> "SIM 1"
+                    1 -> "SIM 2"
+                    else -> "default SIM"
+                }
+                "✅ Call lag rahi hai ($simTxt): $num"
+            } else {
+                val dial = Intent(Intent.ACTION_DIAL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                ctx.startActivity(dial)
+                "📞 Dialer khula (CALL permission nahi) — $num"
+            }
+        } catch (e: Exception) {
+            try {
+                ctx.startActivity(Intent(Intent.ACTION_DIAL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                "📞 Dialer: $num (${e.message})"
+            } catch (e2: Exception) {
+                "❌ Call fail: ${e2.message}"
+            }
+        }
+    }
+
+    private fun tryAttachPhoneAccount(ctx: Context, intent: Intent, slot: Int) {
+        try {
+            if (Build.VERSION.SDK_INT < 23) return
+            if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.READ_PHONE_STATE)
+                != PackageManager.PERMISSION_GRANTED
+            ) return
+            val tm = ctx.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager ?: return
+            val accounts: List<PhoneAccountHandle> = tm.callCapablePhoneAccounts ?: return
+            if (accounts.isEmpty()) return
+            val handle = accounts.getOrNull(slot) ?: accounts.firstOrNull() ?: return
+            intent.putExtra(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, handle)
+        } catch (_: Exception) {}
+    }
+
+    /** WhatsApp voice / video — needs internet */
+    fun whatsAppCall(ctx: Context, phone: String, video: Boolean): String {
+        val digits = phone.filter { it.isDigit() }
+        if (digits.length < 8) return "❌ WA call ke liye valid number chahiye"
+        // jid without + 
+        val jid = digits
+        return try {
+            val action = if (video) "com.whatsapp.intent.action.CALL" else "com.whatsapp.voip.action.CALL"
+            // Try official-style voip intent
+            val i = Intent().apply {
+                setPackage("com.whatsapp")
+                this.action = if (video) "com.whatsapp.voip.action.CALL" else "com.whatsapp.voip.action.CALL"
+                putExtra("jid", "$jid@s.whatsapp.net")
+                putExtra("video_call", video)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (video) {
+                i.action = "com.whatsapp.voip.action.CALL"
+                i.putExtra("video_call", true)
+            }
+            try {
+                ctx.startActivity(i)
+                return if (video) "📹 WhatsApp video call: $jid" else "📞 WhatsApp voice call: $jid"
+            } catch (_: Exception) {}
+            // Fallback: open chat (user taps call)
+            val wa = Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$jid")).apply {
+                setPackage("com.whatsapp")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            ctx.startActivity(wa)
+            "💬 WhatsApp chat khuli ($jid) — ${if (video) "video" else "voice"} call button dabao (direct intent block ho sakta hai)."
+        } catch (e: Exception) {
+            "❌ WhatsApp call fail: ${e.message}. Data/Wi‑Fi on karo."
+        }
+    }
+
+    fun statusText(ctx: Context): String {
+        val sims = listSims(ctx)
+        val def = defaultSlot(ctx)
+        val sb = StringBuilder("📱 *SIM Dialer*\n\n")
+        sb.append("Default: **${defaultLabel(ctx)}**\n\n")
+        sims.forEach { sb.append("• ${it.label} (slot ${it.slot + 1})\n") }
+        sb.append("\nChat:\n• sim 1 default / sim 2 default / sim ask\n• call Ali sim 1\n• wa call Ali / wa video Ali\n")
+        return sb.toString()
+    }
+}
