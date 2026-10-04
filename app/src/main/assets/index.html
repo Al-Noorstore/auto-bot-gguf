@@ -786,6 +786,8 @@ $('msg').addEventListener('keydown', e => {
     else if (a === 'dlfile' && AutoBotNative.openLocalFile) AutoBotNative.openLocalFile(ph);
     else if (a === 'simcall' && AutoBotNative.simCall) AutoBotNative.simCall(ph);
     else if (a === 'simcancel' && AutoBotNative.handleChatCommand) AutoBotNative.handleChatCommand('cancel');
+    else if (a === 'simset' && AutoBotNative.handleChatCommand) AutoBotNative.handleChatCommand(ph);
+    else if (a === 'wacall' && AutoBotNative.handleChatCommand) AutoBotNative.handleChatCommand(ph);
     else if (a === 'dlmodel' && AutoBotNative.downloadModel) AutoBotNative.downloadModel(ph);
       else if (a === 'dlvoice' && AutoBotNative.downloadVoiceModel) AutoBotNative.downloadVoiceModel(ph);
     el.disabled = true; el.style.opacity = '0.5';
@@ -795,7 +797,7 @@ $('msg').addEventListener('keydown', e => {
     // Native mode banner ab hidden (feature phir bhi active hai, sirf visual notice nahi dikhta)
     document.body.insertAdjacentHTML('afterbegin', '<div style="display:none;background:#0ea5b7;color:#04222a;padding:6px 14px;font-size:12px;font-weight:600;text-align:center">📱 Native mode ON — contacts phone mein save honge</div>');
     var mo = document.getElementById('sidebar');
-    if (mo) mo.insertAdjacentHTML('beforeend', '<button class="nav-item" onclick="AutoBotNative.openTerminal()"><span class="nav-ico">🖥️</span> Terminal</button><button class="nav-item" onclick="AutoBotNative.openNativePanel()"><span class="nav-ico">⚡</span> Native Powers</button><button class="nav-item" onclick="AutoBotNative.openSettings()"><span class="nav-ico">⚙️</span> Settings</button>');
+    if (mo) mo.insertAdjacentHTML('beforeend', '<button class="nav-item" onclick="AutoBotNative.openTerminal()"><span class="nav-ico">🖥️</span> Terminal</button><button class="nav-item" onclick="AutoBotNative.openNativePanel()"><span class="nav-ico">⚡</span> Native Powers</button><button class="nav-item" onclick="AutoBotNative.openSimDialer && AutoBotNative.openSimDialer()"><span class="nav-ico">📱</span> SIM Dialer</button><button class="nav-item" onclick="AutoBotNative.openSettings()"><span class="nav-ico">⚙️</span> Settings</button>');
   }
   // Purchase disclaimer ab static bar nahi — sirf jab purchase-related baat chal rahi ho tab chat mein reminder
   (function () {

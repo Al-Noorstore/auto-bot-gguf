@@ -220,7 +220,9 @@ object OfflineBrain {
     private class Pending {
         var kind = ""                     // choice | save | relation | delete | editnum | pw
         var contacts: List<BrainContact> = emptyList()
-        var purpose = "call"              // call | show
+        var purpose = "call"              // call | show | wacall
+        var sim = -1                      // v4.2: forced sim (0/1) choice ke liye
+        var video = false                 // v4.2: WhatsApp video call?
         var contact: BrainContact? = null
         var name = ""
         var phone = ""
@@ -396,18 +398,36 @@ object OfflineBrain {
 
     /** resolve name/relation string → matching contacts (name + relation dono fuzzy). */
     fun resolve(contacts: List<BrainContact>, target: String): List<BrainContact> {
+        val t = target.trim().lowercase()
+        if (t.isBlank()) return emptyList()
         val words = target.split(Regex("[\\s]+")).filter { it.length > 1 && it !in STOP_WORDS && it !in listOf("mera", "meri", "my", "ko", "karo", "ka", "ki") }
-        if (words.isEmpty()) return emptyList()
+        // v4.2: 1) EXACT poora naam — "rizwan bai" sirf Rizwan Bai (Amir Bai mix kabhi nahi)
+        contacts.filter { it.name.lowercase() == t }.let { if (it.isNotEmpty()) return it }
         val rel = relationOf(target)
         val nameWords = words.filter { REL_MAP[it] == null && !REL_BIGRAMS.containsKey(it) }
-        val nameMatch = { c: BrainContact -> nameWords.any { c.name.lowercase().contains(it.lowercase()) } }
         val relMatch = { c: BrainContact -> rel != null && c.relation != null && (c.relation!!.lowercase() == rel.lowercase() || c.relation!!.lowercase().contains(rel.lowercase()) || rel.lowercase().contains(c.relation!!.lowercase())) }
-        if (nameWords.isNotEmpty()) {
-            val both = contacts.filter { nameMatch(it) && (rel == null || relMatch(it)) }
-            if (both.isNotEmpty()) return both
-            val nm = contacts.filter { nameMatch(it) }
-            if (nm.isNotEmpty()) return nm
+        // v4.2: 2) akela relation-suffix ("bai"/"bhai") → naam mein suffix wale SAB log list
+        if (nameWords.isEmpty()) {
+            val suffixes = listOf("bai", "bhai", "brother", "dost", "friend", "uncle", "chacha", "mamu", "bhen", "behen")
+            val sfx = words.firstOrNull { it in suffixes } ?: rel?.lowercase()
+            if (sfx != null) {
+                val byName = contacts.filter { it.name.lowercase().contains(sfx) }
+                if (byName.isNotEmpty()) return byName
+                if (rel != null) {
+                    val rm = contacts.filter { relMatch(it) }
+                    if (rm.isNotEmpty()) return rm
+                }
+            }
+            return emptyList()
         }
+        // v4.2: 3) AND-match: naam ke SAB words hone chahiye (pehle "any" tha — Rizwan Bai/Amir Bai mix ho jata tha)
+        val nameMatch = { c: BrainContact -> nameWords.all { c.name.lowercase().contains(it.lowercase()) } }
+        if (rel != null) {
+            val both = contacts.filter { nameMatch(it) && relMatch(it) }
+            if (both.isNotEmpty()) return both
+        }
+        val nm = contacts.filter { nameMatch(it) }
+        if (nm.isNotEmpty()) return nm
         if (rel != null) {
             val rm = contacts.filter { relMatch(it) }
             if (rm.isNotEmpty()) return rm
@@ -460,10 +480,16 @@ object OfflineBrain {
                         r.text = "📱 ${pick.name}" + (if (pick.relation != null) " (${pick.relation})" else "") + " ka number: ${pick.phone}"
                         r.buttons.add(BrainButton("📞 Call ${pick.name}", "call", pick.phone))
                         r.buttons.add(BrainButton("💬 WhatsApp", "wa", pick.phone))
+                    } else if (p.purpose == "wacall") {
+                        // v4.2: WhatsApp voice/video call choice
+                        val rel = if (pick.relation != null) " (${pick.relation})" else ""
+                        r.text = "📞 ${pick.name}$rel ko WhatsApp ${if (p.video) "video" else "voice"} call laga raha hoon: ${pick.phone}"
+                        r.actions.add(BrainAction("wacall", pick.phone, pick.name + "|" + (if (p.video) "video" else "voice")))
                     } else {
                         val rel = if (pick.relation != null) " (${pick.relation})" else ""
-                        r.text = "📞 ${pick.name}$rel ko call laga raha hoon: ${pick.phone}"
-                        r.actions.add(BrainAction("call", pick.phone))
+                        val simTxt = if (p.sim in 0..1) " — SIM ${p.sim + 1} se" else ""
+                        r.text = "📞 ${pick.name}$rel ko call laga raha hoon: ${pick.phone}$simTxt"
+                        r.actions.add(BrainAction("call", pick.phone, pick.name + "|" + (if (p.sim in 0..1) p.sim.toString() else "")))
                     }
                     return true
                 }
@@ -918,35 +944,63 @@ object OfflineBrain {
             }
         }
 
-        // ---------- 10) CALL by name/relation (ya seedha number) ----------
+        // ---------- 10) CALL by name/relation (ya seedha number) — v4.2: sim + whatsapp + exact match ----------
         val target = beforeVerbTarget(low)
         if (target != null && !lockWord && CLOSE_WORDS.none { words.contains(it) }) {
-            val dphone = extractPhone(target)
+            // v4.2: WhatsApp call intent ("X ko whatsapp pr call karo" / "wa video X")
+            val waIntent = Regex("\\bwhatsapp\\b|\\bwhats\\s*app\\b|وٹس ایپ|व्हाट्सएप").containsMatchIn(low)
+                || (Regex("\\bwa\\b").containsMatchIn(low) && !Regex("\\bsim\\b").containsMatchIn(low))
+            val video = low.contains("video") || low.contains("وڈیو") || low.contains("वीडियो")
+            // v4.2: "call X sim 2" → forced sim (chat override, setting se upar)
+            val forcedSim = SimDialer.parseSimFromText(low)
+            // target clean: whatsapp/pr/sim/video ke extra words hatao
+            val cleanTarget = target
+                .replace(Regex("(?i)\\b(whatsapp|whats\\s*app|wa)\\b"), " ")
+                .replace(Regex("(?i)\\bvideo\\b"), " ")
+                .replace(Regex("(?i)\\bsim\\s*(1|2|one|two|ek|do)?\\b"), " ")
+                .replace(Regex("(?i)\\b(pr|pe|par|on|se)\\b"), " ")
+                .replace(Regex("\\s+"), " ").trim()
+                .replace(Regex("(?:ko|ka)\\s*$"), "").trim()
+            if (cleanTarget.isBlank()) return null  // MainActivity ka wa-call handler sambhalega
+            val dphone = extractPhone(cleanTarget)
             if (dphone != null) {
-                r.text = "📞 Number mil gaya: ${normalizePhone(dphone)} — call laga raha hoon."
-                r.actions.add(BrainAction("call", normalizePhone(dphone)))
+                if (waIntent) {
+                    r.text = "📞 WhatsApp ${if (video) "video" else "voice"} call: ${normalizePhone(dphone)}"
+                    r.actions.add(BrainAction("wacall", normalizePhone(dphone), (if (video) "video" else "voice")))
+                } else {
+                    val simTxt = if (forcedSim != null) " (SIM ${forcedSim + 1} se)" else ""
+                    r.text = "📞 Number mil gaya: ${normalizePhone(dphone)} — call laga raha hoon$simTxt."
+                    r.actions.add(BrainAction("call", normalizePhone(dphone), "|" + (forcedSim?.toString() ?: "")))
+                }
                 r.buttons.add(BrainButton("🔴 End Call", "endcall"))
                 return r
             }
             val contacts = loadContacts(ctx)
-            val hits = resolve(contacts, target)
+            val hits = resolve(contacts, cleanTarget)
             when {
                 hits.isEmpty() -> {
                     r.text = t(lang,
-                        "\"$target\" is not saved yet. Say: \"save $target <number>\"",
-                        "\"$target\" saved nahi mila.\nSave karo: \"save $target <number>\" (relation optional: bhai/behen/mamo...)\nSaved list: \"contacts\"")
+                        "\"$cleanTarget\" is not saved yet. Say: \"save $cleanTarget <number>\"",
+                        "\"$cleanTarget\" saved nahi mila.\nSave karo: \"save $cleanTarget <number>\" (relation optional: bhai/behen/mamo...)\nSaved list: \"contacts\"")
                 }
                 hits.size == 1 -> {
                     val c = hits[0]
                     val rel = if (c.relation != null) " (${c.relation})" else ""
-                    r.text = "📞 ${c.name}$rel ko call laga raha hoon: ${c.phone}"
-                    r.actions.add(BrainAction("call", c.phone))
+                    if (waIntent) {
+                        r.text = "📞 ${c.name}$rel ko WhatsApp ${if (video) "video" else "voice"} call laga raha hoon: ${c.phone}"
+                        r.actions.add(BrainAction("wacall", c.phone, c.name + "|" + (if (video) "video" else "voice")))
+                    } else {
+                        val simTxt = if (forcedSim != null) " — SIM ${forcedSim + 1} se" else ""
+                        r.text = "📞 ${c.name}$rel ko call laga raha hoon: ${c.phone}$simTxt"
+                        r.actions.add(BrainAction("call", c.phone, c.name + "|" + (forcedSim?.toString() ?: "")))
+                    }
                     r.buttons.add(BrainButton("🔴 End Call", "endcall"))
                 }
                 else -> {
-                    pending = Pending().apply { kind = "choice"; this.contacts = hits; purpose = "call" }
-                    val names = hits.mapIndexed { i, c -> "${i + 1}. ${c.name}" + (if (c.relation != null) " (${c.relation})" else "") }
-                    r.text = "🤔 ${hits.size} log mile:\n${names.joinToString("\n")}\nKis ko call karna hai? Naam ya number bolo."
+                    // v4.2: list mein naam + number dono dikho
+                    pending = Pending().apply { kind = "choice"; this.contacts = hits; purpose = if (waIntent) "wacall" else "call"; this.sim = forcedSim ?: -1; this.video = video }
+                    val names = hits.mapIndexed { i, c -> "${i + 1}. ${c.name} — ${c.phone}" + (if (c.relation != null) " (${c.relation})" else "") }
+                    r.text = "🤔 ${hits.size} log mile:\n${names.joinToString("\n")}\nKis ko ${if (waIntent) "WhatsApp call" else "call"} karna hai? Naam ya number bolo."
                 }
             }
             return r
@@ -1069,8 +1123,11 @@ object OfflineBrain {
         if (low.contains("app") && lockWord && OPEN_WORDS.any { words.contains(it) } && !low.contains("phone") && !low.contains("screen")) {
             val pw = vaultGet(ctx, "app lock")
             r.actions.add(BrainAction("openapp", "app lock"))
-            r.text = if (pw != null) "🔓 App Lock app khol raha hoon.\n🔑 Password (aapne save karwaya tha): $pw\n⚠️ Note: dusri app ke password box mein main khud type nahi kar sakta (Android security) — password yahan se copy kar lo."
-            else "🔓 App Lock app khol raha hoon.\n⚠️ App lock ka password abhi save nahi. Bolo: \"app lock ka password <password>\" — private save ho jayega (sirf isi phone pe)."
+            r.text = if (pw != null) {
+                // v4.2: Accessibility ON hai to bot khud type kar ke lock khol dega
+                r.actions.add(BrainAction("typepw", pw))
+                "🔓 App Lock app khol raha hoon.\n🔑 Password: $pw\n♿ Accessibility ON hai to main khud type kar dunga — screen par lock aa jaye to bas 2 second ruk jana."
+            } else "🔓 App Lock app khol raha hoon.\n⚠️ App lock ka password abhi save nahi. Bolo: \"app lock ka password <password>\" — private save ho jayega (sirf isi phone pe)."
             return r
         }
 

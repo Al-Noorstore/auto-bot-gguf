@@ -965,9 +965,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startSmartCall(name: String, phone: String, forcedSim: Int?) {
-        val slot = forcedSim ?: SimDialer.defaultSlot(this).takeIf { it >= 0 }
+        // v4.2 priority: chat mein bola (forcedSim) > contact ki aadat (learned) > default setting > poochho
+        val learned = SimDialer.contactSim(this, phone)
+        val slot = forcedSim ?: learned ?: SimDialer.defaultSlot(this).takeIf { it >= 0 }
         if (slot != null) {
-            chatReply(SimDialer.placeCall(this, phone, slot) + "\n👤 $name • $phone")
+            SimDialer.noteCall(this, slot)
+            SimDialer.noteContactCall(this, phone, slot)
+            val src = when {
+                forcedSim != null -> "(aap ne chat mein bola)"
+                learned == slot -> "(aadat: $name ko aap zyada-tar isi SIM se call karte ho)"
+                else -> "(default setting)"
+            }
+            chatReply(SimDialer.placeCall(this, phone, slot) + "\n👤 $name • $phone\n($src)")
+            showSimSuggestion()
             return
         }
         // ask SIM — chat buttons + text/mic
@@ -977,6 +987,7 @@ class MainActivity : AppCompatActivity() {
         val sims = SimDialer.listSims(this)
         val s1 = sims.firstOrNull { it.slot == 0 }?.label ?: "SIM 1"
         val s2 = sims.firstOrNull { it.slot == 1 }?.label ?: "SIM 2"
+        TtsBox.speak(this, "$name ko kaun si SIM se call karni hai? SIM 1, ya SIM 2?")
         chatReplyEx(
             "📞 **$name**\n📱 $phone\n\nKaun si SIM se call?",
             org.json.JSONArray()
@@ -1326,7 +1337,38 @@ class MainActivity : AppCompatActivity() {
             if (br != null) {
                 for (a in br.actions) {
                     when (a.action) {
-                        "call" -> runOnUiThread { inputPhone.setText(a.arg); autoCall() }
+                        "call" -> runOnUiThread {
+                            // v4.2: arg2 = "Name|sim" — sim aware smart call (default/learned/ask + buttons)
+                            val parts = a.arg2.split("|")
+                            val nm = parts.getOrNull(0)?.trim().orEmpty().ifBlank { a.arg }
+                            val fs = parts.getOrNull(1)?.trim()?.toIntOrNull()?.takeIf { it in 0..1 }
+                            startSmartCall(nm, a.arg, fs)
+                        }
+                        "wacall" -> runOnUiThread {
+                            // v4.2: WhatsApp voice/video call (arg2 = "Name|video|voice")
+                            val parts = a.arg2.split("|")
+                            val nm = parts.getOrNull(0)?.trim().orEmpty().ifBlank { a.arg }
+                            val video = parts.getOrNull(1) == "video"
+                            chatReply(SimDialer.whatsAppCall(this@MainActivity, a.arg, video) + "\n👤 $nm" + if (video) " • video call" else "")
+                        }
+                        "typepw" -> runOnUiThread {
+                            // v4.2: app lock auto-unlock — accessibility se password type karo
+                            if (AutoBotAccessibilityService.isOn()) {
+                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                    try {
+                                        val r1 = AutoBotAccessibilityService.typeText(a.arg)
+                                        if (r1 == "OK") {
+                                            var tapped = false
+                                            for (lbl in listOf("ok", "unlock", "submit", "done", "confirm", "تأكيد", "ठीक")) {
+                                                if (AutoBotAccessibilityService.tapText(lbl) == "OK") { tapped = true; break }
+                                            }
+                                            if (!tapped) AutoBotAccessibilityService.tapText("enter")
+                                            chatReply("🔓 App lock mein password type kar diya" + if (tapped) " + button dabaya." else " — Enter khud dabana padega.")
+                                        } else chatReply("⚠️ Password box nahi mila on screen. Screen parho se dekho, ya khud type karo: " + a.arg)
+                                    } catch (_: Exception) {}
+                                }, 1500)
+                            } else chatReply("⚠️ Password type karne ke liye Accessibility ON chahiye.\n" + a.arg + "\n(password yahan se copy kar lo)")
+                        }
                         "endcall" -> runOnUiThread { endCallAction(false) }
                         "lock" -> runOnUiThread { lockPhone(false) }
                         "openapp" -> runOnUiThread { val r = openAppByName(a.arg); if (!r.startsWith("✅")) chatReply(r) }
@@ -1610,6 +1652,22 @@ class MainActivity : AppCompatActivity() {
         if (low == "accessibility" || low == "accessibility status" || low == "accessibility on" || low.startsWith("accessibility ")) {
             val on = AutoBotAccessibilityService.isOn()
             chatReply(if (on) "♿ Accessibility ON hai — Auto Bot screen padh sakta hai.\nTask do: 'screen parho'" else accSteps)
+            return true
+        }
+        // ---------- v4.2: APP LOCK unlock — saved password accessibility se type karo ----------
+        if (low == "unlock" || low == "unlock karo" || low.contains("password laga do") || low.contains("password daal do") || low.contains("password type karo") || low.contains("lock khol do")) {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            val pw = OfflineBrain.vaultGet(this, "app lock") ?: OfflineBrain.vaultGet(this, "whatsapp")
+            if (pw == null) { chatReply("⚠️ App lock ka password saved nahi. Pehle bolo: \"app lock ka password <password>\" — phir main khud type kar dunga."); return true }
+            val r1 = AutoBotAccessibilityService.typeText(pw)
+            if (r1 == "OK") {
+                var tapped = false
+                for (lbl in listOf("ok", "unlock", "submit", "done", "confirm")) {
+                    if (AutoBotAccessibilityService.tapText(lbl) == "OK") { tapped = true; break }
+                }
+                if (!tapped) AutoBotAccessibilityService.tapText("enter")
+                chatReply("🔓 Password type kar diya" + if (tapped) " + button bhi dabaya." else " — Enter/OK khud dabao.")
+            } else chatReply("⚠️ Screen par password box nahi mila. Pehle wo app kholo jis ka lock hai, phir 'unlock karo' bolo.")
             return true
         }
         if (low.contains("screen parho") || low.contains("screen padho") || low.contains("read screen") || low.contains("screen text") || low.contains("screen read")) {
@@ -2838,18 +2896,18 @@ ipa download
             chatReply(SimDialer.statusText(this)); return true
         }
         if (low == "sim 1 default" || low == "default sim 1" || low == "always sim 1") {
-            SimDialer.setDefaultSlot(this, 0)
-            chatReply("✅ Default call SIM: **SIM 1**\nAb bina pooche SIM 1 se call (override: call Name sim 2)")
+            SimDialer.setDefaultSlot(this, 0); SimDialer.noteUserChoseDefault(this)
+            chatReply("✅ Default call SIM: **SIM 1**\nAb bina pooche SIM 1 se call (override: call Name sim 2)\nSettings: menu → SIM Dialer")
             return true
         }
         if (low == "sim 2 default" || low == "default sim 2" || low == "always sim 2") {
-            SimDialer.setDefaultSlot(this, 1)
-            chatReply("✅ Default call SIM: **SIM 2**\nAb bina pooche SIM 2 se call (override: call Name sim 1)")
+            SimDialer.setDefaultSlot(this, 1); SimDialer.noteUserChoseDefault(this)
+            chatReply("✅ Default call SIM: **SIM 2**\nAb bina pooche SIM 2 se call (override: call Name sim 1)\nSettings: menu → SIM Dialer")
             return true
         }
         if (low == "sim ask" || low == "default sim ask" || low == "sim poochho") {
-            SimDialer.setDefaultSlot(this, SimDialer.ASK)
-            chatReply("✅ Default: har call pe SIM 1 / SIM 2 poochhunga")
+            SimDialer.setDefaultSlot(this, SimDialer.ASK); SimDialer.noteUserChoseDefault(this)
+            chatReply("✅ Default: har call pe SIM 1 / SIM 2 poochhunga (chat + speaker)")
             return true
         }
         // pending SIM choice after "call Name"
@@ -2868,7 +2926,10 @@ ipa download
             val nm = pendingCallName ?: ph
             pendingCallPhone = null; pendingCallName = null
             val r = SimDialer.placeCall(this, ph, slot)
+            SimDialer.noteCall(this, slot)                 // v4.2: aadat note
+            SimDialer.noteContactCall(this, ph, slot)
             chatReply("$r\n👤 $nm")
+            showSimSuggestion()
             return true
         }
         // WhatsApp voice / video call
@@ -2948,10 +3009,7 @@ ipa download
                 }
                 startActivity(intent)
                 chatReply("📇 Contacts app khuli — number: $phone\nNaam: $nameGuess\nSave dabao.")
-                if (SimDialer.defaultSlot(this) == SimDialer.ASK && !SimDialer.prefs(this).getBoolean("asked_sim_once", false)) {
-                    SimDialer.prefs(this).edit().putBoolean("asked_sim_once", true).apply()
-                    chatReply("📱 Calls kis SIM se karni hain by default?\n• sim 1 default\n• sim 2 default\n• sim ask (har baar poochho)")
-                }
+                askSimAfterSave()   // v4.2: buttons + speaker wala poora flow
             } catch (e: Exception) {
                 chatReply("❌ Contact save UI nahi khuli: ${e.message}\nManually save: $phone")
             }
@@ -3107,7 +3165,19 @@ ipa download
                 val ph = parts.getOrNull(1) ?: return@runOnUiThread
                 pendingCallPhone = null
                 pendingCallName = null
-                chatReply(SimDialer.placeCall(this@MainActivity, ph, slot))
+                val res = SimDialer.placeCall(this@MainActivity, ph, slot)
+                SimDialer.noteCall(this@MainActivity, slot)            // v4.2: aadat note
+                SimDialer.noteContactCall(this@MainActivity, ph, slot)
+                chatReply(res)
+                showSimSuggestion()
+            }
+        }
+
+        @JavascriptInterface
+        fun openSimDialer() {
+            runOnUiThread {
+                try { startActivity(Intent(this@MainActivity, SimDialerActivity::class.java)) }
+                catch (_: Exception) { chatReply(SimDialer.statusText(this@MainActivity)) }
             }
         }
 
@@ -3285,7 +3355,10 @@ ipa download
                 .withValue(ContactsContract.CommonDataKinds.Phone.NUMBER, phone)
                 .withValue(ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE).build())
             val results = contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
-            if (results.isNotEmpty()) { Toast.makeText(this, "✅ $name phone ki contact book mein save ho gaya", Toast.LENGTH_LONG).show(); status("Saved: $name ($phone)") }
+            if (results.isNotEmpty()) {
+                Toast.makeText(this, "✅ $name phone ki contact book mein save ho gaya", Toast.LENGTH_LONG).show(); status("Saved: $name ($phone)")
+                askSimAfterSave()   // v4.2: pehla save → "call kis sim se?"
+            }
             else { Toast.makeText(this, "Save fail", Toast.LENGTH_SHORT).show(); status("Save fail") }
         } catch (e: Exception) {
             Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_LONG).show(); status("Error: ${e.message}")
@@ -3554,6 +3627,42 @@ ipa download
                 null
             )
         } catch (_: Exception) {}
+    }
+
+    // ---------- v4.2: pehla contact save → "call kis SIM se?" ----------
+    private fun askSimAfterSave() {
+        if (SimDialer.defaultSlot(this) != SimDialer.ASK) return
+        if (SimDialer.prefs(this).getBoolean("asked_sim_once", false)) return
+        SimDialer.prefs(this).edit().putBoolean("asked_sim_once", true).apply()
+        val sims = SimDialer.listSims(this)
+        val s1 = sims.firstOrNull { it.slot == 0 }?.label ?: "SIM 1"
+        val s2 = sims.firstOrNull { it.slot == 1 }?.label ?: "SIM 2"
+        TtsBox.speak(this, "Contact save ho gaya! Ab call kis SIM se karni hai? SIM 1, ya SIM 2?")
+        chatReplyEx(
+            "📱 **Pehla contact save ho gaya!** ✅\nAb calls kis SIM se karni hain by default?",
+            org.json.JSONArray()
+                .put(org.json.JSONObject().put("label", "📱 $s1").put("action", "simset").put("phone", "sim 1 default"))
+                .put(org.json.JSONObject().put("label", "📱 $s2").put("action", "simset").put("phone", "sim 2 default"))
+                .put(org.json.JSONObject().put("label", "🔄 Har baar poochho").put("action", "simset").put("phone", "sim ask"))
+                .toString()
+        )
+    }
+
+    // ---------- v4.2: aadat-based default SIM suggestion (user approval ke saath) ----------
+    private fun showSimSuggestion() {
+        val lead = SimDialer.suggestSlot(this) ?: return
+        SimDialer.noteSuggestShown(this)
+        val (u0, u1) = SimDialer.usage(this)
+        val total = u0 + u1
+        val leadU = if (lead == 0) u0 else u1
+        TtsBox.speak(this, "Maine note kiya, aap zyada tar SIM ${lead + 1} se call karte hain. Kya SIM ${lead + 1} default bana doon?")
+        chatReplyEx(
+            "📊 **Aapki aadat note ki hai**\nZyada-tar **SIM ${lead + 1}** se call karte ho ($leadU me $total).\nSIM ${lead + 1} ko default bana doon? (phir har call pe nahi poochunga)",
+            org.json.JSONArray()
+                .put(org.json.JSONObject().put("label", "✅ Haan, SIM ${lead + 1} default").put("action", "simset").put("phone", "sim ${lead + 1} default"))
+                .put(org.json.JSONObject().put("label", "❌ Nahi").put("action", "simcancel").put("phone", ""))
+                .toString()
+        )
     }
 
     // ---------- v2.6: brain contact → phone contact book bhi ----------

@@ -169,12 +169,77 @@ object SimDialer {
         }
     }
 
+    // ================= v4.2: SIM LEARNING (aadat note karo, default suggest karo) =================
+
+    /** Har call par: kis sim se lagi. null = pata nahi (system default). */
+    fun noteCall(ctx: Context, slot: Int?) {
+        if (slot == null || slot !in 0..1) return
+        val p = prefs(ctx)
+        p.edit().putInt("use_" + slot, p.getInt("use_" + slot, 0) + 1).apply()
+    }
+
+    /** (SIM1 calls, SIM2 calls) ab tak */
+    fun usage(ctx: Context): Pair<Int, Int> {
+        val p = prefs(ctx)
+        return Pair(p.getInt("use_0", 0), p.getInt("use_1", 0))
+    }
+
+    /** Per-contact aadat: "Rizwan Bai ko zyada-tar SIM 2 se hi call hoti hai" */
+    fun noteContactCall(ctx: Context, phone: String, slot: Int) {
+        if (slot !in 0..1) return
+        val key = "csim_" + phone.filter { it.isDigit() }.takeLast(7)
+        val p = prefs(ctx)
+        val parts = (p.getString(key, "") ?: "").split(":")
+        val curSlot = parts.getOrNull(0)?.toIntOrNull() ?: -1
+        val curCnt = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        val newSlot: Int
+        val newCnt: Int
+        if (curSlot == slot) { newSlot = slot; newCnt = curCnt + 1 }
+        else if (curSlot < 0 || curCnt <= 1) { newSlot = slot; newCnt = 1 }
+        else { newSlot = curSlot; newCnt = curCnt }  // purani aadat zyada strong — badalta nahi
+        p.edit().putString(key, "$newSlot:$newCnt").apply()
+    }
+
+    /** Contact ki preferred SIM (2+ baar usi se call hui ho) ya null */
+    fun contactSim(ctx: Context, phone: String): Int? {
+        val key = "csim_" + phone.filter { it.isDigit() }.takeLast(7)
+        val parts = (prefs(ctx).getString(key, "") ?: "").split(":")
+        val slot = parts.getOrNull(0)?.toIntOrNull() ?: return null
+        val cnt = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        return if (slot in 0..1 && cnt >= 2) slot else null
+    }
+
+    /** Agar user zyada-tar ek SIM se call karta hai (ASK mode) → us slot ki suggestion (ek hi baar) */
+    fun suggestSlot(ctx: Context): Int? {
+        val p = prefs(ctx)
+        if (p.getBoolean("sim_suggest_done", false)) return null
+        if (defaultSlot(ctx) != ASK) return null
+        val (u0, u1) = usage(ctx)
+        if (u0 + u1 < 3) return null
+        val lead = if (u0 >= u1) 0 else 1
+        val leadU = if (lead == 0) u0 else u1
+        val otherU = if (lead == 0) u1 else u0
+        if (leadU - otherU < 2) return null
+        return lead
+    }
+
+    fun noteSuggestShown(ctx: Context) {
+        prefs(ctx).edit().putBoolean("sim_suggest_done", true).apply()
+    }
+
+    /** User ne khud default choose kiya (page ya chat) — ab dobara suggestion nahi karenge */
+    fun noteUserChoseDefault(ctx: Context) {
+        prefs(ctx).edit().putBoolean("sim_suggest_done", true).apply()
+    }
+
     fun statusText(ctx: Context): String {
         val sims = listSims(ctx)
         val def = defaultSlot(ctx)
         val sb = StringBuilder("📱 *SIM Dialer*\n\n")
         sb.append("Default: **${defaultLabel(ctx)}**\n\n")
         sims.forEach { sb.append("• ${it.label} (slot ${it.slot + 1})\n") }
+        val (u0, u1) = usage(ctx)
+        sb.append("\nAapki aadat: SIM 1 = $u0 calls, SIM 2 = $u1 calls\n")
         sb.append("\nChat:\n• sim 1 default / sim 2 default / sim ask\n• call Ali sim 1\n• wa call Ali / wa video Ali\n")
         return sb.toString()
     }
