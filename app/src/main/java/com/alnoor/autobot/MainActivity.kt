@@ -1267,7 +1267,152 @@ class MainActivity : AppCompatActivity() {
         else { val b = conn.inputStream.use { it.readBytes() }; conn.disconnect(); b }
     } catch (e: Exception) { null }
 
-    /** {ver}: artifact zip ke andar se text file parho (cloud terminal output) */
+    /** v4.5: GitHub cloud terminal — command chalao, output wapas (github run + agent mode dono yahan aate hain) */
+    private fun ghCloudRun(token: String, full: String, command: String): String {
+        val hdr = mapOf("Authorization" to "Bearer $token", "Accept" to "application/vnd.github+json")
+        val (rc2, _) = TokenVault.http("GET", "https://api.github.com/repos/$full", hdr, null)
+        if (rc2 !in 200..299) return "\u274C Repo nahi mila: $full"
+        var prevId = 0L
+        val (pc0, pt0) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/runs?event=workflow_dispatch&per_page=10", hdr, null)
+        if (pc0 in 200..299) {
+            val rs0 = JSONObject(pt0).optJSONArray("workflow_runs") ?: JSONArray()
+            for (i in 0 until rs0.length()) {
+                val r0 = rs0.getJSONObject(i)
+                if (r0.optString("name").contains("Cloud") && r0.optLong("id") > prevId) prevId = r0.optLong("id")
+            }
+        }
+        val (bc2, _) = TokenVault.http("GET", "https://api.github.com/repos/$full/contents/.github/workflows/cloud-terminal.yml", hdr, null)
+        if (bc2 !in 200..299) {
+            runOnUiThread { chatReply("\u2601\uFE0F Cloud terminal setup ho raha hai (sirf pehli baar)...") }
+            GitHubSync.ensureCloudTerminal(token, full)
+            Thread.sleep(5000)
+        }
+        val (rc3, rt3) = TokenVault.http("GET", "https://api.github.com/repos/$full", hdr, null)
+        val branch = if (rc3 in 200..299) JSONObject(rt3).optString("default_branch", "main") else "main"
+        val (dc2, dt2) = GitHubSync.triggerCloudTerminal(token, full, command, branch)
+        if (dc2 !in 200..299 && dc2 != 204) return "\u274C Cloud command start fail (HTTP $dc2): ${dt2.take(200)}"
+        runOnUiThread { chatReply("\u2601\uFE0F GitHub cloud (Linux) pe chal raha hai:\n$ " + command.take(150) + "\nWait kar raha hoon...") }
+        Thread.sleep(12000)
+        var concl = ""; var runId = 0L
+        val tEnd = System.currentTimeMillis() + 9 * 60 * 1000L
+        while (System.currentTimeMillis() < tEnd && concl.isEmpty()) {
+            val (pc2, pt2) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/runs?event=workflow_dispatch&per_page=10", hdr, null)
+            if (pc2 in 200..299) {
+                val rs2 = JSONObject(pt2).optJSONArray("workflow_runs") ?: JSONArray()
+                for (i in 0 until rs2.length()) {
+                    val r2 = rs2.getJSONObject(i)
+                    if (r2.optString("name").contains("Cloud") && r2.optLong("id") > prevId && r2.optString("status") == "completed") {
+                        concl = r2.optString("conclusion"); runId = r2.optLong("id"); break
+                    }
+                }
+            }
+            if (concl.isEmpty()) Thread.sleep(10000)
+        }
+        if (concl.isEmpty()) return "\u23F3 Command abhi chal raha hai (9 min+). Baad mein: github runs $full"
+        if (concl != "success") return "\u274C Command fail hua ($concl).\nLog: https://github.com/$full/actions"
+        val (ac2, at2) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/runs/$runId/artifacts", hdr, null)
+        val arts = if (ac2 in 200..299) JSONObject(at2).optJSONArray("artifacts") ?: JSONArray() else JSONArray()
+        for (i in 0 until arts.length()) {
+            val a2 = arts.getJSONObject(i)
+            if (a2.optString("name") == "terminal-output") {
+                val zip = ghDownload("https://api.github.com/repos/$full/actions/artifacts/" + a2.optInt("id") + "/zip", token)
+                val output = ghReadZipText(zip, "output.txt") ?: return "\u2705 Command chal gaya, output nahi mila. Log: https://github.com/$full/actions/runs/$runId"
+                val txt = if (output.length > 3500) output.take(3500) + "\n... (truncated)" else output
+                return "\uD83D\uDDA5 *Cloud output:*\n```\n$txt\n```"
+            }
+        }
+        return "\u2705 Command chal gaya, output nahi mila. Log: https://github.com/$full/actions/runs/$runId"
+    }
+
+    /** v4.5: AGENT MODE — phone terminal (local shell, sync) */
+    private fun agentShell(dir: File, cmd: String): Pair<Boolean, String> {
+        val danger = listOf("rm -rf /", "dd if=", "> /system", "mkfs")
+        if (danger.any { cmd.contains(it) }) return Pair(false, "BLOCKED: ye command khatarnak hai.")
+        return try {
+            val wrapped = DepStore.pathExport(this) + "; " + cmd
+            val p = ProcessBuilder("sh", "-c", wrapped).directory(dir).redirectErrorStream(true).start()
+            val out = try { p.inputStream.bufferedReader().use { it.readText() } } catch (_: Exception) { "" }
+            try { p.waitFor() } catch (_: Exception) {}
+            val code = try { p.exitValue() } catch (_: Exception) { -1 }
+            p.destroy()
+            val ok = code == 0 && !out.contains("not found", true) && !out.contains("permission denied", true)
+            val o = out.trim().take(1800).ifBlank { if (code == 0) "(no output, exit ok)" else "(exit $code)" }
+            Pair(ok, o)
+        } catch (e: Exception) { Pair(false, "Error: " + e.message) }
+    }
+
+    /** v4.5: AGENT LOOP — AI soche, khud command chalaye; phone fail ho to cloud auto-fallback */
+    private fun agentRun(task: String) {
+        Thread {
+            val pref = getSharedPreferences("autobot", MODE_PRIVATE)
+            val token = TokenVault.get(this, "github")
+            val dir = GitHubSync.activeProjectDir(this) ?: ProjectStore.root(this)
+            val lastRepo = pref.getString("gh_last_repo", "") ?: ""
+            runOnUiThread { chatReply("\uD83E\uDD16 *Agent start:* $task\n\uD83D\uDCC2 Project: ${dir.name}\n\uD83D\uDDA5 Default: phone terminal \u2014 fail \u2192 \u2601\uFE0F cloud automatic.\n(Max 6 steps)") }
+            var history = ""
+            val tools = ("TOOLS (har jawab sirf EK JSON):\n" +
+                "shell: {\"action\":\"shell\",\"command\":\"...\"} \u2014 phone terminal (file ops, sh, python3 scripts; pip/compile fail hoga)\n" +
+                "write: {\"action\":\"write\",\"path\":\"file.ext\",\"content\":\"...\"} \u2014 project file likho\n" +
+                "ask_user: {\"action\":\"ask_user\",\"question\":\"...\"} \u2014 user se poocho\n" +
+                "done: {\"action\":\"done\",\"summary\":\"...\"} \u2014 task complete\n" +
+                "RULES: ek step mein ek hi action. Files chhoti rakho. Summary Roman Urdu mein.")
+            for (step in 1..6) {
+                val files = try { dir.listFiles()?.take(15)?.joinToString("\n") { it.name } ?: "(khali)" } catch (_: Exception) { "(khali)" }
+                val prompt = tools + "\n\nTASK: $task\n\nPROJECT FILES:\n$files\n\nAB TAK:\n" + (history.ifBlank { "(shuru)" }) + "\n\nAgla step JSON:"
+                val ai = AIBrain.askApi(this, prompt)
+                if (ai == null) { runOnUiThread { chatReply("\u274C Agent ke liye API key chahiye:\napi key gemini <key>") }; return@Thread }
+                val j = try { JSONObject("{" + ai.substringAfter("{").substringBeforeLast("}") + "}") } catch (_: Exception) { null }
+                if (j == null) { runOnUiThread { chatReply("\u26A0\uFE0F Agent ka jawab samajh nahi aaya (JSON nahi mila). Dobara: agent <task>") }; return@Thread }
+                when (j.optString("action", "")) {
+                    "shell" -> {
+                        val cmd = j.optString("command", "").trim()
+                        if (cmd.isEmpty()) { history += "\nStep $step: khaali command"; continue }
+                        runOnUiThread { chatReply("\uD83E\uDD16 Step $step \uD83D\uDCF1 phone: " + cmd.take(150)) }
+                        val (ok, out) = agentShell(dir, cmd)
+                        runOnUiThread { chatReply("\uD83D\uDCF1 Output:\n" + out.take(1200)) }
+                        var result = "Step $step CMD: $cmd\nRESULT(${if (ok) "OK" else "FAIL"}): $out"
+                        if (!ok && token != null && lastRepo.isNotBlank()) {
+                            runOnUiThread { chatReply("\u26A0\uFE0F Phone se nahi hua \u2014 \u2601\uFE0F cloud pe try karta hoon ($lastRepo)...") }
+                            val cloudOut = ghCloudRun(token, lastRepo, cmd)
+                            runOnUiThread { chatReply(cloudOut.take(1600)) }
+                            result = "Step $step CMD: $cmd\nPHONE FAIL. CLOUD: " + cloudOut.replace("\n", " ").take(600)
+                        } else if (!ok && (token == null || lastRepo.isBlank())) {
+                            runOnUiThread { chatReply("\u2139\uFE0F Phone fail hua. Cloud ke liye pehle 'github push' karo (project ka repo banega).") }
+                        }
+                        history = (history + "\n" + result).takeLast(2800)
+                    }
+                    "write" -> {
+                        val path = j.optString("path", "").replace("..", "")
+                        val content = j.optString("content", "")
+                        if (path.isBlank() || content.isBlank()) { history += "\nStep $step: khaali write"; continue }
+                        try {
+                            val f = File(dir, path)
+                            f.parentFile?.mkdirs()
+                            f.writeText(content)
+                            runOnUiThread { chatReply("\uD83E\uDD16 Step $step \uD83D\uDCC4 File likhi: $path (${content.length} chars)") }
+                            history = (history + "\nStep $step WROTE: $path (${content.length} chars)").takeLast(2800)
+                        } catch (e: Exception) {
+                            runOnUiThread { chatReply("\u274C Write fail: ${e.message}") }
+                            history = (history + "\nStep $step WRITE FAIL: ${e.message}").takeLast(2800)
+                        }
+                    }
+                    "ask_user" -> {
+                        ProjectStore.setLastTask(this, task)
+                        runOnUiThread { chatReply("\uD83E\uDD16 Poochta hai: " + j.optString("question", "...") + "\n(jawab do, phir 'agent <task>' se continue)") }
+                        return@Thread
+                    }
+                    "done" -> {
+                        runOnUiThread { chatReply("\u2705 *Agent complete:*\n" + j.optString("summary", "ho gaya")) }
+                        return@Thread
+                    }
+                    else -> history += "\nStep $step: unknown action"
+                }
+            }
+            runOnUiThread { chatReply("\u23F9 6 steps poore. Continue: agent <baaki task>") }
+        }.start()
+    }
+
+    /** v4.4: artifact zip ke andar se text file parho (cloud terminal output) */
     private fun ghReadZipText(zip: ByteArray?, innerName: String): String? {
         if (zip == null) return null
         return try {
@@ -2198,6 +2343,28 @@ class MainActivity : AppCompatActivity() {
             }
             return true
         }
+        // ---------- v4.5: AGENT MODE ----------
+        if (low == "agent mode on" || low == "agent on") {
+            getSharedPreferences("autobot", MODE_PRIVATE).edit().putBoolean("agent_mode", true).apply()
+            chatReply("\uD83E\uDD16 Agent mode ON \u2014 ab seedha task bolo (jaise 'python script banao jo X kare'), main khud commands chalaungi.\nDefault: phone terminal; fail \u2192 \u2601\uFE0F cloud automatic.\nOff: agent mode off")
+            return true
+        }
+        if (low == "agent mode off" || low == "agent off") {
+            getSharedPreferences("autobot", MODE_PRIVATE).edit().putBoolean("agent_mode", false).apply()
+            chatReply("\uD83E\uDD16 Agent mode OFF.")
+            return true
+        }
+        if (low == "agent mode" || low == "agent status") {
+            val on = getSharedPreferences("autobot", MODE_PRIVATE).getBoolean("agent_mode", false)
+            chatReply("\uD83E\uDD16 Agent mode: " + (if (on) "ON" else "OFF") + "\n'agent <task>' = ek run\n'agent mode on' = task-jaisa message khud pakar lunga")
+            return true
+        }
+        if ((low.startsWith("agent ") || low.startsWith("agent: ")) && !low.startsWith("agent mode") && !low.startsWith("agent on") && !low.startsWith("agent off")) {
+            val task = if (msg.startsWith("agent:", true)) msg.substringAfter(":").trim() else msg.substringAfter("agent ").trim()
+            if (task.isNotBlank()) agentRun(task)
+            return true
+        }
+
         // ---------- v4.4: per-project TODO / pending ----------
         if (low.startsWith("todo done ") || low.startsWith("task done ") || low.startsWith("pending done ")) {
             val n = low.substringAfter("done ").trim().toIntOrNull() ?: 1
@@ -2457,6 +2624,7 @@ class MainActivity : AppCompatActivity() {
                 Thread {
                     val (ok, full) = GitHubSync.ensureRepo(token, repoName, true)
                     if (!ok) { runOnUiThread { chatReply(full) }; return@Thread }
+                    try { getSharedPreferences("autobot", MODE_PRIVATE).edit().putString("gh_last_repo", full).apply() } catch (_: Exception) {}
                     val pr = GitHubSync.pushFolder(token, full, dir)
                     if (pr.fail > 0) GitHubSync.setPendingError(this, pr.message)
                     runOnUiThread {
@@ -2509,7 +2677,8 @@ project open myapp → token save github ghp_… → fastlane ios / fastlane and
             Thread {
                 val (ok, full) = GitHubSync.ensureRepo(token, repoName, true)
                 if (!ok) { runOnUiThread { chatReply(full) }; return@Thread }
-                val pr = GitHubSync.pushFolder(token, full, dir)
+                try { getSharedPreferences("autobot", MODE_PRIVATE).edit().putString("gh_last_repo", full).apply() } catch (_: Exception) {}
+                    val pr = GitHubSync.pushFolder(token, full, dir)
                 val fl = GitHubSync.ensureFastlane(token, full, platform)
                 val tr = GitHubSync.triggerFastlane(token, full, platform)
                 ProjectStore.setLastTask(this, "fastlane:$platform:$full")
@@ -2569,7 +2738,8 @@ ipa download
             Thread {
                 val (ok, full) = GitHubSync.ensureRepo(token, repoName, true)
                 if (!ok) { runOnUiThread { chatReply(full) }; return@Thread }
-                val pr = GitHubSync.pushFolder(token, full, dir)
+                try { getSharedPreferences("autobot", MODE_PRIVATE).edit().putString("gh_last_repo", full).apply() } catch (_: Exception) {}
+                    val pr = GitHubSync.pushFolder(token, full, dir)
                 if (pr.fail > 0) {
                     GitHubSync.setPendingError(this, pr.message)
                     runOnUiThread { chatReply(pr.message + "\n\n⛔ *haan fix* ya *build phir bhi*") }
@@ -2597,7 +2767,8 @@ ipa download
             Thread {
                 val (ok, full) = GitHubSync.ensureRepo(token, repoName, true)
                 if (!ok) { runOnUiThread { chatReply(full) }; return@Thread }
-                val pr = GitHubSync.pushFolder(token, full, dir)
+                try { getSharedPreferences("autobot", MODE_PRIVATE).edit().putString("gh_last_repo", full).apply() } catch (_: Exception) {}
+                    val pr = GitHubSync.pushFolder(token, full, dir)
                 if (pr.fail > 0) {
                     GitHubSync.setPendingError(this, pr.message)
                     runOnUiThread {
@@ -2631,7 +2802,8 @@ ipa download
             Thread {
                 val (ok, full) = GitHubSync.ensureRepo(token, repoName, true)
                 if (!ok) { runOnUiThread { chatReply(full) }; return@Thread }
-                val pr = GitHubSync.pushFolder(token, full, dir)
+                try { getSharedPreferences("autobot", MODE_PRIVATE).edit().putString("gh_last_repo", full).apply() } catch (_: Exception) {}
+                    val pr = GitHubSync.pushFolder(token, full, dir)
                 if (pr.fail > 0) {
                     GitHubSync.setPendingError(this, pr.message)
                     runOnUiThread {
@@ -2895,67 +3067,7 @@ ipa download
                             if (login2.isBlank()) "❌ Token kaam nahi kar raha"
                             else {
                                 val full = if (bits[0].contains("/")) bits[0] else "$login2/" + bits[0]
-                                val command = bits[1]
-                                val (rc2, _) = TokenVault.http("GET", "https://api.github.com/repos/$full", hdr, null)
-                                if (rc2 !in 200..299) "❌ Repo nahi mila: $full"
-                                else {
-                                    // pehle run ka latest id yaad rakho (naye run ko pehchanne ke liye)
-                                    var prevId = 0L
-                                    val (pc0, pt0) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/runs?event=workflow_dispatch&per_page=10", hdr, null)
-                                    if (pc0 in 200..299) {
-                                        val rs0 = JSONObject(pt0).optJSONArray("workflow_runs") ?: JSONArray()
-                                        for (i in 0 until rs0.length()) {
-                                            val r0 = rs0.getJSONObject(i)
-                                            if (r0.optString("name").contains("Cloud") && r0.optLong("id") > prevId) prevId = r0.optLong("id")
-                                        }
-                                    }
-                                    val (bc2, _) = TokenVault.http("GET", "https://api.github.com/repos/$full/contents/.github/workflows/cloud-terminal.yml", hdr, null)
-                                    if (bc2 !in 200..299) {
-                                        runOnUiThread { chatReply("☁️ Cloud terminal setup ho raha hai (sirf pehli baar)...") }
-                                        GitHubSync.ensureCloudTerminal(token, full)
-                                        Thread.sleep(5000)
-                                    }
-                                    val (rc3, rt3) = TokenVault.http("GET", "https://api.github.com/repos/$full", hdr, null)
-                                    val branch = if (rc3 in 200..299) JSONObject(rt3).optString("default_branch", "main") else "main"
-                                    val (dc2, dt2) = GitHubSync.triggerCloudTerminal(token, full, command, branch)
-                                    if (dc2 !in 200..299 && dc2 != 204) "❌ Cloud command start fail (HTTP $dc2): ${dt2.take(200)}"
-                                    else {
-                                        runOnUiThread { chatReply("☁️ GitHub cloud (Linux) pe chal raha hai:\n$ " + command.take(150) + "\n1-2 min lagta hai, wait kar raha hoon...") }
-                                        Thread.sleep(12000)
-                                        var concl = ""; var runId = 0L
-                                        val tEnd = System.currentTimeMillis() + 9 * 60 * 1000L
-                                        while (System.currentTimeMillis() < tEnd && concl.isEmpty()) {
-                                            val (pc2, pt2) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/runs?event=workflow_dispatch&per_page=10", hdr, null)
-                                            if (pc2 in 200..299) {
-                                                val rs2 = JSONObject(pt2).optJSONArray("workflow_runs") ?: JSONArray()
-                                                for (i in 0 until rs2.length()) {
-                                                    val r2 = rs2.getJSONObject(i)
-                                                    if (r2.optString("name").contains("Cloud") && r2.optLong("id") > prevId && r2.optString("status") == "completed") {
-                                                        concl = r2.optString("conclusion"); runId = r2.optLong("id"); break
-                                                    }
-                                                }
-                                            }
-                                            if (concl.isEmpty()) Thread.sleep(10000)
-                                        }
-                                        if (concl.isEmpty()) "⏳ Command abhi chal raha hai (9 min+ ho gaya). Baad mein: github runs $full"
-                                        else if (concl != "success") "❌ Command fail hua ($concl).\nLog: https://github.com/$full/actions"
-                                        else {
-                                            val (ac2, at2) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/runs/$runId/artifacts", hdr, null)
-                                            val arts = if (ac2 in 200..299) JSONObject(at2).optJSONArray("artifacts") ?: JSONArray() else JSONArray()
-                                            var output: String? = null
-                                            for (i in 0 until arts.length()) {
-                                                val a2 = arts.getJSONObject(i)
-                                                if (a2.optString("name") == "terminal-output") {
-                                                    val zip = ghDownload("https://api.github.com/repos/$full/actions/artifacts/" + a2.optInt("id") + "/zip", token)
-                                                    output = ghReadZipText(zip, "output.txt")
-                                                    break
-                                                }
-                                            }
-                                            if (output == null) "✅ Command chal gaya, output nahi mila — log: https://github.com/$full/actions/runs/$runId"
-                                            else "🖥 *Cloud output:*\n```\n" + (if (output.length > 3500) output.take(3500) + "\n... (truncated, poora log GitHub pe)" else output) + "\n```"
-                                        }
-                                    }
-                                }
+                                ghCloudRun(token, full, bits[1])
                             }
                         }
                     }
@@ -3384,6 +3496,13 @@ ipa download
         // ---------- v3.6 DIRECT AI: koi command match nahi hua + AI available ----------
         // 'ask' likhne ki zarurat nahi — user seedha koi bhi sawal/baat likhe, Qwen samajh lega.
         val dq = msg.trim()
+        // v4.5: agent mode ON + task-jaisa message -> AI khud terminal/cloud chalaye
+        if (dq.length >= 2) {
+            val agentOn = try { getSharedPreferences("autobot", MODE_PRIVATE).getBoolean("agent_mode", false) } catch (_: Exception) { false }
+            if (agentOn && Regex("(?i)(banao|bana do|likho|fix|complete|karo|test|script|project|code bana|app bana)").containsMatchIn(low)) {
+                agentRun(dq); return true
+            }
+        }
         if (dq.length >= 2 && AIBrain.aiAvailable(this)) { aiAnswer(dq); return true }
         return false
     }
