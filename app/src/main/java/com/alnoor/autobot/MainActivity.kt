@@ -1267,6 +1267,20 @@ class MainActivity : AppCompatActivity() {
         else { val b = conn.inputStream.use { it.readBytes() }; conn.disconnect(); b }
     } catch (e: Exception) { null }
 
+    /** {ver}: artifact zip ke andar se text file parho (cloud terminal output) */
+    private fun ghReadZipText(zip: ByteArray?, innerName: String): String? {
+        if (zip == null) return null
+        return try {
+            val zin = java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(zip))
+            var e = zin.nextEntry
+            while (e != null) {
+                if (e.name.endsWith(innerName)) return String(zin.readBytes(), Charsets.UTF_8)
+                e = zin.nextEntry
+            }
+            null
+        } catch (_: Exception) { null }
+    }
+
     private fun extractApks(zip: ByteArray, repo: String): List<String> {
         val out = ArrayList<String>()
         try {
@@ -2184,6 +2198,24 @@ class MainActivity : AppCompatActivity() {
             }
             return true
         }
+        // ---------- v4.4: per-project TODO / pending ----------
+        if (low.startsWith("todo done ") || low.startsWith("task done ") || low.startsWith("pending done ")) {
+            val n = low.substringAfter("done ").trim().toIntOrNull() ?: 1
+            chatReply(ProjectStore.todoDone(this, n)); return true
+        }
+        if (low == "todo" || low == "todos" || low == "kya pending" || low == "kya pending hai" || low == "pending list" || low == "task list") {
+            chatReply(ProjectStore.todoList(this)); return true
+        }
+        if ((low.startsWith("todo ") || low.startsWith("pending ") || low.startsWith("task ")) && low != "task list") {
+            val t = when {
+                low.startsWith("todo ") -> msg.substringAfter("todo ", "").trim()
+                low.startsWith("pending ") -> msg.substringAfter("pending ", "").trim()
+                else -> msg.substringAfter("task ", "").trim()
+            }
+            if (t.isBlank() || t == "list") chatReply(ProjectStore.todoList(this))
+            else chatReply(ProjectStore.todoAdd(this, t))
+            return true
+        }
         if (low == "project memory" || low == "memory") {
             chatReply(ProjectStore.memoryAll(this)); return true
         }
@@ -2852,7 +2884,156 @@ ipa download
                             }
                         }
                     }
-                    else -> "🐙 GitHub commands:\n• github status — account info\n• github repo banao <naam> — naya private repo\n• github build <repo> — Actions se APK build + phone mein save\n• github apk <repo> — last build ki APKs phone mein\n• github runs <repo> — build status"
+                    // ---------- v4.4: CLOUD TERMINAL — GitHub ke Linux runner pe koi bhi command ----------
+                    rest.startsWith("run ") || rest.startsWith("cmd ") || rest.startsWith("terminal ") -> {
+                        val pr = rest.substringAfter(" ").trim()
+                        val bits = pr.split("|", limit = 2).map { it.trim() }
+                        if (bits.size < 2 || bits[1].isBlank()) "❌ Format: github run <repo> | <command>\nJaise: github run myproject | python3 script.py\n(Runner pe tumhara repo checkout hota hai, internet bhi hai)"
+                        else {
+                            val (uc2, ut2) = TokenVault.http("GET", "https://api.github.com/user", hdr, null)
+                            val login2 = if (uc2 in 200..299) JSONObject(ut2).optString("login") else ""
+                            if (login2.isBlank()) "❌ Token kaam nahi kar raha"
+                            else {
+                                val full = if (bits[0].contains("/")) bits[0] else "$login2/" + bits[0]
+                                val command = bits[1]
+                                val (rc2, _) = TokenVault.http("GET", "https://api.github.com/repos/$full", hdr, null)
+                                if (rc2 !in 200..299) "❌ Repo nahi mila: $full"
+                                else {
+                                    // pehle run ka latest id yaad rakho (naye run ko pehchanne ke liye)
+                                    var prevId = 0L
+                                    val (pc0, pt0) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/runs?event=workflow_dispatch&per_page=10", hdr, null)
+                                    if (pc0 in 200..299) {
+                                        val rs0 = JSONObject(pt0).optJSONArray("workflow_runs") ?: JSONArray()
+                                        for (i in 0 until rs0.length()) {
+                                            val r0 = rs0.getJSONObject(i)
+                                            if (r0.optString("name").contains("Cloud") && r0.optLong("id") > prevId) prevId = r0.optLong("id")
+                                        }
+                                    }
+                                    val (bc2, _) = TokenVault.http("GET", "https://api.github.com/repos/$full/contents/.github/workflows/cloud-terminal.yml", hdr, null)
+                                    if (bc2 !in 200..299) {
+                                        runOnUiThread { chatReply("☁️ Cloud terminal setup ho raha hai (sirf pehli baar)...") }
+                                        GitHubSync.ensureCloudTerminal(token, full)
+                                        Thread.sleep(5000)
+                                    }
+                                    val (rc3, rt3) = TokenVault.http("GET", "https://api.github.com/repos/$full", hdr, null)
+                                    val branch = if (rc3 in 200..299) JSONObject(rt3).optString("default_branch", "main") else "main"
+                                    val (dc2, dt2) = GitHubSync.triggerCloudTerminal(token, full, command, branch)
+                                    if (dc2 !in 200..299 && dc2 != 204) "❌ Cloud command start fail (HTTP $dc2): ${dt2.take(200)}"
+                                    else {
+                                        runOnUiThread { chatReply("☁️ GitHub cloud (Linux) pe chal raha hai:\n$ " + command.take(150) + "\n1-2 min lagta hai, wait kar raha hoon...") }
+                                        Thread.sleep(12000)
+                                        var concl = ""; var runId = 0L
+                                        val tEnd = System.currentTimeMillis() + 9 * 60 * 1000L
+                                        while (System.currentTimeMillis() < tEnd && concl.isEmpty()) {
+                                            val (pc2, pt2) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/runs?event=workflow_dispatch&per_page=10", hdr, null)
+                                            if (pc2 in 200..299) {
+                                                val rs2 = JSONObject(pt2).optJSONArray("workflow_runs") ?: JSONArray()
+                                                for (i in 0 until rs2.length()) {
+                                                    val r2 = rs2.getJSONObject(i)
+                                                    if (r2.optString("name").contains("Cloud") && r2.optLong("id") > prevId && r2.optString("status") == "completed") {
+                                                        concl = r2.optString("conclusion"); runId = r2.optLong("id"); break
+                                                    }
+                                                }
+                                            }
+                                            if (concl.isEmpty()) Thread.sleep(10000)
+                                        }
+                                        if (concl.isEmpty()) "⏳ Command abhi chal raha hai (9 min+ ho gaya). Baad mein: github runs $full"
+                                        else if (concl != "success") "❌ Command fail hua ($concl).\nLog: https://github.com/$full/actions"
+                                        else {
+                                            val (ac2, at2) = TokenVault.http("GET", "https://api.github.com/repos/$full/actions/runs/$runId/artifacts", hdr, null)
+                                            val arts = if (ac2 in 200..299) JSONObject(at2).optJSONArray("artifacts") ?: JSONArray() else JSONArray()
+                                            var output: String? = null
+                                            for (i in 0 until arts.length()) {
+                                                val a2 = arts.getJSONObject(i)
+                                                if (a2.optString("name") == "terminal-output") {
+                                                    val zip = ghDownload("https://api.github.com/repos/$full/actions/artifacts/" + a2.optInt("id") + "/zip", token)
+                                                    output = ghReadZipText(zip, "output.txt")
+                                                    break
+                                                }
+                                            }
+                                            if (output == null) "✅ Command chal gaya, output nahi mila — log: https://github.com/$full/actions/runs/$runId"
+                                            else "🖥 *Cloud output:*\n```\n" + (if (output.length > 3500) output.take(3500) + "\n... (truncated, poora log GitHub pe)" else output) + "\n```"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // ---------- v4.4: CODE READ — GitHub repo ki file parho ----------
+                    rest.startsWith("code parho ") || rest.startsWith("code read ") || rest.startsWith("file parho ") -> {
+                        val pr = rest.replace(Regex("^(code|file)\\s+(parho|read)\\s+"), "").trim()
+                        val bits = pr.split(Regex("\\s+"), limit = 2).map { it.trim() }
+                        if (bits.size < 2 || bits[1].isBlank()) "❌ Format: github code parho <repo> <file-path>"
+                        else {
+                            val (uc3, ut3) = TokenVault.http("GET", "https://api.github.com/user", hdr, null)
+                            val login3 = if (uc3 in 200..299) JSONObject(ut3).optString("login") else ""
+                            val full = if (bits[0].contains("/")) bits[0] else "$login3/" + bits[0]
+                            val (cc3, ct3) = TokenVault.http("GET", "https://api.github.com/repos/$full/contents/" + java.net.URLEncoder.encode(bits[1], "UTF-8"), hdr, null)
+                            if (cc3 !in 200..299) "❌ File nahi mila: ${bits[1]} (HTTP $cc3)"
+                            else {
+                                val o = JSONObject(ct3)
+                                if (o.has("content")) {
+                                    val content = String(android.util.Base64.decode(o.optString("content"), android.util.Base64.DEFAULT), Charsets.UTF_8)
+                                    val lines = content.split("\n")
+                                    val shown = if (lines.size > 90) lines.take(90).joinToString("\n") + "\n... (${lines.size} lines total)" else content
+                                    "📄 *${bits[1]}* (${content.length} chars, ${lines.size} lines):\n```\n" + (if (shown.length > 3500) shown.take(3500) + "\n..." else shown) + "\n```"
+                                } else "📁 Ye folder hai (${o.optString("type")}) — file ka exact path bolo."
+                            }
+                        }
+                    }
+                    // ---------- v4.4: CODE WRITE — file edit + direct commit ----------
+                    rest.startsWith("code likho ") || rest.startsWith("code edit ") || rest.startsWith("code commit ") -> {
+                        val pr = rest.replace(Regex("^code\\s+(likho|edit|commit)\\s+"), "").trim()
+                        val bits = pr.split("|", limit = 2).map { it.trim() }
+                        if (bits.size < 2 || bits[1].isBlank()) "❌ Format: github code likho <repo> <file-path> | <naya content>"
+                        else {
+                            val head = bits[0].split(Regex("\\s+"), limit = 2).map { it.trim() }
+                            if (head.size < 2) "❌ Format: github code likho <repo> <file-path> | <naya content>"
+                            else {
+                                val (uc4, ut4) = TokenVault.http("GET", "https://api.github.com/user", hdr, null)
+                                val login4 = if (uc4 in 200..299) JSONObject(ut4).optString("login") else ""
+                                val full = if (head[0].contains("/")) head[0] else "$login4/" + head[0]
+                                val res = GitHubSync.putFile(token, full, head[1], bits[1].toByteArray(), "Auto Bot code edit")
+                                if (res == "OK") "✅ Commit ho gaya: ${head[1]}\nRepo: https://github.com/$full/commits"
+                                else "❌ Commit fail: $res"
+                            }
+                        }
+                    }
+                    // ---------- v4.4: AI BUGFIX — file parho, AI se fix, commit ----------
+                    rest.startsWith("bugfix ") || rest.startsWith("bug fix ") || rest.startsWith("fix bug ") -> {
+                        val pr = rest.removePrefix("bugfix ").removePrefix("bug fix ").removePrefix("fix bug ").trim()
+                        val bits = pr.split(Regex("\\s+"), limit = 2).map { it.trim() }
+                        if (bits.size < 2 || bits[1].isBlank()) "❌ Format: github bugfix <repo> <file-path>"
+                        else {
+                            val (uc5, ut5) = TokenVault.http("GET", "https://api.github.com/user", hdr, null)
+                            val login5 = if (uc5 in 200..299) JSONObject(ut5).optString("login") else ""
+                            val full = if (bits[0].contains("/")) bits[0] else "$login5/" + bits[0]
+                            val (cc5, ct5) = TokenVault.http("GET", "https://api.github.com/repos/$full/contents/" + java.net.URLEncoder.encode(bits[1], "UTF-8"), hdr, null)
+                            if (cc5 !in 200..299) "❌ File nahi mili: ${bits[1]} (HTTP $cc5)"
+                            else {
+                                val o = JSONObject(ct5)
+                                if (!o.has("content")) "❌ Ye file nahi lagti"
+                                else {
+                                    val content = String(android.util.Base64.decode(o.optString("content"), android.util.Base64.DEFAULT), Charsets.UTF_8)
+                                    runOnUiThread { chatReply("🔍 ${bits[1]} parh li (${content.length} chars) — AI se bug fix karwa raha hoon...") }
+                                    val prompt = "Tum senior software developer ho. Neeche file mein bug/error hai. Sirf poora FIXED file code do — koi explanation nahi, koi markdown fence/backtick nahi, bas pure code:\n\n$content"
+                                    val fix = AIBrain.askApi(this, prompt)
+                                    if (fix == null) "❌ Bugfix ke liye API key chahiye (Gemini/OpenAI):\napi key gemini <key> — free: aistudio.google.com/apikey"
+                                    else {
+                                        var code = fix.trim()
+                                        if (code.startsWith("```")) code = code.substringAfter("\n").substringBeforeLast("```").trim()
+                                        if (code.length < 20) "⚠️ AI ne sahi code nahi diya — manually karo: github code likho <repo> <path> | <content>"
+                                        else {
+                                            val res = GitHubSync.putFile(token, full, bits[1], code.toByteArray(), "Auto Bot AI bugfix")
+                                            if (res == "OK") "🔧 *Bug fix commit ho gaya!*\nFile: ${bits[1]}\nRevert karna ho: https://github.com/$full/commits (History se purana version)"
+                                            else "❌ Commit fail: $res"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else -> "🐙 GitHub commands:\n• github status — account info\n• github repo banao <naam> — naya private repo\n• github build <repo> — Actions se APK build + phone mein save\n• github apk <repo> — last build ki APKs phone mein\n• github runs <repo> — build status\n• github run <repo> | <cmd> — ☁️ cloud terminal (Linux pe koi bhi command)\n• github code parho <repo> <path> — repo ki file dekho\n• github code likho <repo> <path> | <content> — file edit + commit\n• github bugfix <repo> <path> — 🤖 AI se bug fix + commit\n• github exe <repo> / github ipa <repo> — Windows EXE / iPhone IPA build"
                 }
                 runOnUiThread { chatReply(reply) }
             }.start()

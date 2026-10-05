@@ -668,6 +668,48 @@ jobs:
     fun triggerWindowsWorkflow(token: String, fullRepo: String): String =
         triggerWorkflow(token, fullRepo, "windows-exe-ci.yml")
 
+    // ---------- v4.4: CLOUD TERMINAL — GitHub ke Linux runner pe koi bhi command ----------
+    fun cloudTerminalWorkflowYaml(): String = """
+name: Cloud Terminal
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'Shell command (Auto Bot cloud terminal)'
+        required: true
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run command
+        env:
+          AUTOCMD: ${'$'}{{ github.event.inputs.command }}
+        run: |
+          set +e
+          echo "${'$'}AUTOCMD"
+          eval "${'$'}AUTOCMD" 2>&1 | tee output.txt
+          echo "EXIT:${'$'}?" >> output.txt
+      - name: Upload output
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-output
+          path: output.txt
+""".trimIndent()
+
+    fun ensureCloudTerminal(token: String, fullRepo: String): String {
+        val path = ".github/workflows/cloud-terminal.yml"
+        val res = putFile(token, fullRepo, path, cloudTerminalWorkflowYaml().toByteArray(), "Auto Bot cloud terminal")
+        return if (res == "OK") "✅ Cloud terminal ready ($path)" else "⚠️ Cloud terminal: $res"
+    }
+
+    fun triggerCloudTerminal(token: String, fullRepo: String, command: String, ref: String): Pair<Int, String> {
+        val url = "$API/repos/$fullRepo/actions/workflows/cloud-terminal.yml/dispatches"
+        val body = JSONObject().put("ref", ref).put("inputs", JSONObject().put("command", command)).toString()
+        return TokenVault.http("POST", url, hdr(token), body)
+    }
+
     fun ensureAndroidWorkflow(token: String, fullRepo: String, withAab: Boolean = false): String {
         val path = ".github/workflows/android-ci.yml"
         val res = putFile(token, fullRepo, path, androidWorkflowYaml(withAab).toByteArray(), "Android CI APK/AAB")

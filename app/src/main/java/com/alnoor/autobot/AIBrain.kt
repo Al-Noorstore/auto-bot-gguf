@@ -115,6 +115,18 @@ object AIBrain {
         }
     }
 
+    /** v4.4: API-only answer (bugfix / code generation ke liye) — local fallback NAHI. null = key nahi ya fail */
+    fun askApi(ctx: Context, prompt: String): String? {
+        val keys = KeyStore.load(ctx).filter { it.enabled && it.key.isNotBlank() }
+        val active = keys.firstOrNull { it.active } ?: keys.firstOrNull() ?: return null
+        tryAsk(active, prompt)?.let { return it }
+        for (k in keys) {
+            if (k.label == active.label) continue
+            tryAsk(k, prompt)?.let { return it }
+        }
+        return null
+    }
+
     private fun tryAsk(k: KeyStore.ApiKey, q: String): String? {
         return try {
             val ans = when (k.provider) {

@@ -149,6 +149,39 @@ object ProjectStore {
         return sb.toString()
     }
 
+    // ---------- v4.4: per-project TODO / pending list ----------
+    fun todoAdd(ctx: Context, text: String): String {
+        val a = active(ctx) ?: return "❌ Pehle project open karo (project open <naam>)"
+        val pref = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        val arr = try { org.json.JSONArray(pref.getString("todo_" + a.id, "[]") ?: "[]") } catch (_: Exception) { org.json.JSONArray() }
+        arr.put(text)
+        pref.edit().putString("todo_" + a.id, arr.toString()).apply()
+        return "📝 Todo add: $text\n(total ${arr.length()}) — 'todo' se list, 'todo done <number>' se hatao"
+    }
+
+    fun todoList(ctx: Context): String {
+        val a = active(ctx) ?: return "❌ Pehle project open karo (project open <naam>)"
+        val pref = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        val arr = try { org.json.JSONArray(pref.getString("todo_" + a.id, "[]") ?: "[]") } catch (_: Exception) { org.json.JSONArray() }
+        if (arr.length() == 0) return "📝 Project '${a.name}' mein koi pending nahi 🎉"
+        val sb = StringBuilder("📝 *${a.name} — pending:*\n")
+        for (i in 0 until arr.length()) sb.append("${i + 1}. ${arr.optString(i)}\n")
+        sb.append("\nDone hone par: todo done <number>")
+        return sb.toString()
+    }
+
+    fun todoDone(ctx: Context, n: Int): String {
+        val a = active(ctx) ?: return "❌ Pehle project open karo"
+        val pref = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+        val arr = try { org.json.JSONArray(pref.getString("todo_" + a.id, "[]") ?: "[]") } catch (_: Exception) { org.json.JSONArray() }
+        if (n < 1 || n > arr.length()) return "❌ Number galat — 'todo' se list dekho"
+        val done = arr.optString(n - 1)
+        val na = org.json.JSONArray()
+        for (i in 0 until arr.length()) if (i != n - 1) na.put(arr.get(i))
+        pref.edit().putString("todo_" + a.id, na.toString()).apply()
+        return "✅ Done: $done\n" + if (na.length() == 0) "Sab clear! 🎉" else "Baaki pending: ${na.length()}"
+    }
+
     fun status(ctx: Context): String {
         val all = list(ctx)
         val act = active(ctx)
