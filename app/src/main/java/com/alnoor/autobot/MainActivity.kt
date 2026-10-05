@@ -1680,7 +1680,7 @@ class MainActivity : AppCompatActivity() {
                 // ---------- v3.4: accessibility automation (tap/scroll/back/home) ----------
         val tapTarget = Regex("^tap\\s+(.+?)\\s*(?:karo|kro|do)*\\s*$").find(low)?.groupValues?.get(1)
             ?: Regex("^(.+?)\\s+(?:ko\\s+)?(?:dabao|daba|click\\s+karo|press\\s+karo)\\s*(?:karo|kro|do|de)*\\s*$").find(low)?.groupValues?.get(1)?.takeIf { low.contains("dabao") || low.contains("daba ") || low.contains("click karo") || low.contains("press karo") }
-        if (tapTarget != null && !low.contains("call")) {
+        if (tapTarget != null && !low.contains("call") && !low.startsWith("tap xy") && !low.startsWith("click xy")) {
             if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
             val res = AutoBotAccessibilityService.tapText(tapTarget)
             chatReply(when (res) {
