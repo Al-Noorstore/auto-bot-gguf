@@ -18,7 +18,58 @@ class AutoBotAccessibilityService : AccessibilityService() {
         instance = this
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // ---------- v4.3: App lock auto-apply — jab locked app khule, real PIN/password/pattern laga do ----------
+        try {
+            if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                val pkg = event.packageName?.toString() ?: return
+                val entry = AppLockVault.get(this, pkg) ?: AppLockVault.get(this, "app lock")
+                if (entry != null && entry.enabled && !pkg.startsWith("com.alnoor.autobot")) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastAutoApply > 5000) {
+                        lastAutoApply = now
+                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                            try { autoApplyLock(pkg) } catch (_: Exception) {}
+                        }, 900)
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private var lastAutoApply = 0L
+
+    // lock screen detect karke real credential apply karo
+    private fun autoApplyLock(pkg: String) {
+        val entry = AppLockVault.get(this, pkg) ?: AppLockVault.get(this, "app lock") ?: return
+        val type = detectLockType()
+        when {
+            type == "pattern" && entry.type == "pattern" -> {
+                val res = drawPattern(AppLockVault.secretToPattern(entry.secret))
+                if (res == "OK") AppLockVault.resetFails(this, pkg)
+            }
+            (type == "pin" || type == "password") && entry.type != "pattern" -> {
+                if (typeText(entry.secret) == "OK") {
+                    var tapped = false
+                    for (lbl in listOf("ok", "unlock", "submit", "done", "confirm", "enter")) {
+                        if (tapText(lbl) == "OK") { tapped = true; break }
+                    }
+                    if (tapped) AppLockVault.resetFails(this, pkg)
+                }
+            }
+        }
+        // verify: 1.4s baad lock abhi bhi on hai? → fail
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            try {
+                if (detectLockType() != "none") {
+                    val fails = AppLockVault.bumpFail(this, pkg)
+                    if (fails >= 2) onLockNeedsHelpStatic?.invoke(pkg, "old_lock_fail")
+                } else {
+                    AppLockVault.resetFails(this, pkg)
+                }
+            } catch (_: Exception) {}
+        }, 1400)
+    }
 
     override fun onInterrupt() {}
 
@@ -30,6 +81,9 @@ class AutoBotAccessibilityService : AccessibilityService() {
     companion object {
         @Volatile
         var instance: AutoBotAccessibilityService? = null
+
+        /** v4.3: MainActivity set karta hai — saved lock fail hone par user ko naya lock poochne ke liye */
+        var onLockNeedsHelpStatic: ((String, String) -> Unit)? = null   // (pkg, reason)
 
         fun isOn(): Boolean = instance != null
 
@@ -46,6 +100,62 @@ class AutoBotAccessibilityService : AccessibilityService() {
             val svc = instance ?: return ""
             val root = try { svc.rootInActiveWindow } catch (_: Exception) { null } ?: return ""
             return root.packageName?.toString() ?: ""
+        }
+
+        // ---------- v4.3: lock-type detection + pattern drawing ----------
+        /** Screen dekh kar batao: pattern lock hai, PIN, password, ya koi lock nahi */
+        fun detectLockType(): String {
+            val svc = instance ?: return "OFF"
+            val root = try { svc.rootInActiveWindow } catch (_: Exception) { null } ?: return "NO_WINDOW"
+            if (findPatternRect(root) != null) return "pattern"
+            val edit = findEditable(root) ?: return "none"
+            val txt = readScreen().lowercase()
+            return if (edit.isPassword) {
+                if (txt.contains("pin") || txt.contains("पन") || txt.contains("पिन")) "pin" else "password"
+            } else "password"
+        }
+
+        private fun findPatternRect(root: AccessibilityNodeInfo): Rect? {
+            fun walk(n: AccessibilityNodeInfo, depth: Int): Rect? {
+                if (depth > 30) return null
+                val cn = n.className?.toString() ?: ""
+                if (cn.contains("LockPatternView") || n.contentDescription?.toString()?.contains("pattern", true) == true) {
+                    val r = Rect()
+                    n.getBoundsInScreen(r)
+                    if (r.width() > 40 && r.height() > 40) return r
+                }
+                for (i in 0 until n.childCount) {
+                    val c = try { n.getChild(i) } catch (_: Exception) { null } ?: continue
+                    walk(c, depth + 1)?.let { return it }
+                }
+                return null
+            }
+            return walk(root, 0)
+        }
+
+        /** Pattern draw karo — 3x3 dots (1-9) ke centers se gesture */
+        fun drawPattern(seq: List<Int>): String {
+            val svc = instance ?: return "OFF"
+            if (seq.size < 3) return "SHORT"
+            val root = try { svc.rootInActiveWindow } catch (_: Exception) { null } ?: return "NO_WINDOW"
+            val r = findPatternRect(root) ?: return "NO_PATTERN"
+            val cw = r.width() / 3f
+            val ch = r.height() / 3f
+            val pts = ArrayList<Pair<Float, Float>>()
+            for (n in seq) {
+                if (n !in 1..9) return "BAD_SEQ"
+                val idx = n - 1
+                val cx = r.left + (idx % 3) * cw + cw / 2
+                val cy = r.top + (idx / 3) * ch + ch / 2
+                pts.add(cx to cy)
+            }
+            val path = Path()
+            path.moveTo(pts[0].first, pts[0].second)
+            for (i in 1 until pts.size) path.lineTo(pts[i].first, pts[i].second)
+            val dur = 250L + 160L * pts.size
+            val stroke = GestureDescription.StrokeDescription(path, 0, dur)
+            val ok = svc.dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
+            return if (ok) "OK" else "FAIL"
         }
 
         fun tapText(q: String): String {

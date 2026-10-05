@@ -570,10 +570,27 @@ object OfflineBrain {
                 if (isNoW) { pending = null; r.text = t(lang, "Okay, cancelled.", "Theek hai, cancel."); return true }
                 return true // naya number ka intezaar
             }
+            "pattern" -> {
+                if (isYesW) {
+                    pending = null
+                    AppLockVault.set(ctx, p.label, "pattern", p.value)
+                    vaultSave(ctx, "app lock", "(pattern: ${p.value})")
+                    r.text = "📐 Pattern securely save ho gaya: \"${p.label}\" (private).\nAb jab wo app ka lock khulega, bot khud pattern draw kar dega."
+                    return true
+                }
+                if (isNoW) { pending = null; r.text = t(lang, "Okay, not saved.", "Theek hai, save nahi kiya."); return true }
+                pending = null
+                return false
+            }
             "pw" -> {
                 if (isYesW) {
                     pending = null
                     vaultSave(ctx, p.label, p.value)
+                    // v4.3: "app lock" label → AppLockVault mein bhi
+                    if (p.label.trim().lowercase() == "app lock") {
+                        val typ = if (Regex("^\\d{3,8}$").matches(p.value)) "pin" else "password"
+                        AppLockVault.set(ctx, "app lock", typ, p.value)
+                    }
                     r.text = "🔒 Password securely save ho gaya: \"${p.label}\" (private, sirf isi phone).\nBatana ho to: \"${p.label} ka password batao\""
                     return true
                 }
@@ -1121,14 +1138,33 @@ object OfflineBrain {
 
         // ---------- 15) APP LOCK open ----------
         if (low.contains("app") && lockWord && OPEN_WORDS.any { words.contains(it) } && !low.contains("phone") && !low.contains("screen")) {
-            val pw = vaultGet(ctx, "app lock")
+            // v4.3: AppLockVault se entry lo (pin/password/pattern), password kabhi print nahi
+            val entry = AppLockVault.get(ctx, "app lock")
+                ?: vaultGet(ctx, "app lock")?.let { v ->
+                    if (v.startsWith("(pattern:")) AppLockVault.LockEntry("app lock", "pattern", v.removePrefix("(pattern: ").removeSuffix(")"))
+                    else AppLockVault.LockEntry("app lock", if (Regex("^\\d{3,8}$").matches(v)) "pin" else "password", v)
+                }
             r.actions.add(BrainAction("openapp", "app lock"))
-            r.text = if (pw != null) {
-                // v4.2: Accessibility ON hai to bot khud type kar ke lock khol dega
-                r.actions.add(BrainAction("typepw", pw))
-                "🔓 App Lock app khol raha hoon.\n🔑 Password: $pw\n♿ Accessibility ON hai to main khud type kar dunga — screen par lock aa jaye to bas 2 second ruk jana."
-            } else "🔓 App Lock app khol raha hoon.\n⚠️ App lock ka password abhi save nahi. Bolo: \"app lock ka password <password>\" — private save ho jayega (sirf isi phone pe)."
+            r.text = if (entry != null) {
+                if (entry.type == "pattern") r.actions.add(BrainAction("drawpattern", entry.secret))
+                else r.actions.add(BrainAction("typepw", entry.secret))
+                "🔓 App Lock app khol raha hoon.\n🔑 Saved: ${AppLockVault.mask(entry)} — main khud laga dunga.\n♿ Accessibility ON hai to screen par lock aate hi bas 2 second ruk jana.\n(Security: password chat mein print nahi hota.)"
+            } else "🔓 App Lock app khol raha hoon.\n⚠️ App lock ka password/pin/pattern abhi save nahi. Bolo: \"app lock ka password <password>\" ya \"app lock <app> pattern 1 5 9\" (grid ke liye 'pattern' likho)."
             return r
+        }
+
+        // ---------- v4.3: PATTERN save ("<app> ka pattern 1 5 9" / "app lock ka pattern L") ----------
+        run {
+            val pm2 = Regex("^\\s*(.{2,30}?)\\s+(?:ka|ki)\\s+pattern[\\s:：]+(.+)$").find(low)
+            if (pm2 != null) {
+                val app = pm2.groupValues[1].trim()
+                val seq = AppLockVault.parsePattern(pm2.groupValues[2])
+                if (seq != null) {
+                    pending = Pending().apply { kind = "pattern"; this.label = app; this.value = AppLockVault.patternToSecret(seq) }
+                    r.text = "📐 Pattern mila. Grid aisa hai:\n" + AppLockVault.patternGrid(AppLockVault.patternToSecret(seq)) + "\n\nSave karun? (Private — sirf isi phone)\n[haan / nahi]"
+                    return r
+                }
+            }
         }
 
         // ---------- 16) PASSWORD save (classic "<label> ka password <value>") ----------

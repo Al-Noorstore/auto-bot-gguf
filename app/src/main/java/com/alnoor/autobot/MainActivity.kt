@@ -1081,6 +1081,13 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- lifecycle ----------
     override fun onCreate(savedInstanceState: Bundle?) {
+        // v4.3: agar saved lock purana ho gaya (2 fail) → user se naya poocho
+        AutoBotAccessibilityService.onLockNeedsHelpStatic = { pkg, _ ->
+            runOnUiThread {
+                val nm = pkg.removePrefix("name:").removePrefix("com.")
+                chatReply("⚠️ Sir, apka lock change lagta hai ($nm — 2 baar try fail). Kindly Auto Bot ko dobara bata dein:\n• app lock $nm pin <naya pin>\n• app lock $nm password <naya password>\n• app lock $nm pattern <naya pattern>  ('pattern' likho grid ke liye)\nPurana bot ne yaad rakha tha, ab naya chahiye.")
+            }
+        }
         shellInit()
         super.onCreate(savedInstanceState)
         Thread.setDefaultUncaughtExceptionHandler(CrashLogger(this))
@@ -1350,6 +1357,19 @@ class MainActivity : AppCompatActivity() {
                             val nm = parts.getOrNull(0)?.trim().orEmpty().ifBlank { a.arg }
                             val video = parts.getOrNull(1) == "video"
                             chatReply(SimDialer.whatsAppCall(this@MainActivity, a.arg, video) + "\n👤 $nm" + if (video) " • video call" else "")
+                        }
+                        "drawpattern" -> runOnUiThread {
+                            // v4.3: pattern lock draw karo (arg = "1,5,9")
+                            if (AutoBotAccessibilityService.isOn()) {
+                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                    try {
+                                        val seq = a.arg.split(",").mapNotNull { it.trim().toIntOrNull() }.filter { it in 1..9 }
+                                        val r2 = AutoBotAccessibilityService.drawPattern(seq)
+                                        if (r2 == "OK") chatReply("🔓 Pattern draw ho gaya.")
+                                        else chatReply("⚠️ Pattern draw nahi hua ($r2) — lock screen khuli honi chahiye.")
+                                    } catch (_: Exception) {}
+                                }, 1500)
+                            } else chatReply("⚠️ Pattern draw ke liye Accessibility ON chahiye.")
                         }
                         "typepw" -> runOnUiThread {
                             // v4.2: app lock auto-unlock — accessibility se password type karo
@@ -1654,20 +1674,141 @@ class MainActivity : AppCompatActivity() {
             chatReply(if (on) "♿ Accessibility ON hai — Auto Bot screen padh sakta hai.\nTask do: 'screen parho'" else accSteps)
             return true
         }
-        // ---------- v4.2: APP LOCK unlock — saved password accessibility se type karo ----------
-        if (low == "unlock" || low == "unlock karo" || low.contains("password laga do") || low.contains("password daal do") || low.contains("password type karo") || low.contains("lock khol do")) {
+        // ============================== v4.3: APP LOCK VAULT (pin / password / pattern) ==============================
+
+        // app-name → package resolver (AppLockVault ke liye)
+        val appLockResolver = { name: String ->
+            val n = name.trim().lowercase()
+            val m = mapOf(
+                "whatsapp" to "com.whatsapp", "youtube" to "com.google.android.youtube",
+                "chrome" to "com.android.chrome", "browser" to "com.android.chrome",
+                "gmail" to "com.google.android.gm", "email" to "com.google.android.gm",
+                "maps" to "com.google.android.apps.maps", "playstore" to "com.android.vending",
+                "play store" to "com.android.vending", "photos" to "com.google.android.apps.photos",
+                "gallery" to "com.google.android.apps.photos", "camera" to "com.android.camera2",
+                "facebook" to "com.facebook.katana", "instagram" to "com.instagram.android",
+                "tiktok" to "com.zhiliaoapp.musically", "spotify" to "com.spotify.music",
+                "telegram" to "org.telegram.messenger", "settings" to "com.android.settings"
+            )
+            var pkg = m[n]
+            if (pkg != null && packageManager.getLaunchIntentForPackage(pkg) == null) pkg = null
+            pkg ?: findLaunchPackage(n) ?: if (n.startsWith("com.")) n else null ?: "name:$n"
+        }
+
+        // ---- pattern help / grid ----
+        if (low == "pattern" || low == "pattern batao" || low == "pattern help" || low.contains("pattern samjhao")) {
+            chatReply(AppLockVault.PATTERN_HELP)
+            return true
+        }
+        // ---- pattern test/verify: "pattern 1 5 9" ya "pattern L" → grid dikha do ----
+        if (low.startsWith("pattern ")) {
+            val raw = low.substringAfter("pattern ").trim().removePrefix("karo ").trim()
+            if (raw.isNotEmpty()) {
+                val seq = AppLockVault.parsePattern(raw)
+                if (seq == null) { chatReply("❌ Pattern samajh nahi aaya. 1-9 dots hote hain:\n" + AppLockVault.PATTERN_HELP); return true }
+                chatReply("📐 Aapka pattern:\n" + AppLockVault.patternGrid(AppLockVault.patternToSecret(seq)))
+                return true
+            }
+        }
+        // ---- live pattern draw: "pattern draw karo" ----
+        if (low.contains("pattern draw") || low.contains("pattern banao") || low.contains("draw pattern")) {
             if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
-            val pw = OfflineBrain.vaultGet(this, "app lock") ?: OfflineBrain.vaultGet(this, "whatsapp")
-            if (pw == null) { chatReply("⚠️ App lock ka password saved nahi. Pehle bolo: \"app lock ka password <password>\" — phir main khud type kar dunga."); return true }
-            val r1 = AutoBotAccessibilityService.typeText(pw)
-            if (r1 == "OK") {
-                var tapped = false
-                for (lbl in listOf("ok", "unlock", "submit", "done", "confirm")) {
-                    if (AutoBotAccessibilityService.tapText(lbl) == "OK") { tapped = true; break }
+            val res = AutoBotAccessibilityService.detectLockType()
+            if (res != "pattern") { chatReply("⚠️ Screen par pattern lock nahi mila (detected: $res). Pehle locked app kholo jisme pattern hai."); return true }
+            val fg = AutoBotAccessibilityService.foregroundPackage()
+            val entry = AppLockVault.get(this, fg) ?: AppLockVault.get(this, "app lock")
+            if (entry == null || entry.type != "pattern") { chatReply("⚠️ Pattern saved nahi. Pehle: app lock <app> pattern 1 5 9"); return true }
+            chatReply("🖐 Pattern draw kar raha hoon...")
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                val r2 = AutoBotAccessibilityService.drawPattern(AppLockVault.secretToPattern(entry.secret))
+                if (r2 == "OK") { AppLockVault.resetFails(this, fg); chatReply("🔓 Pattern draw ho gaya.") }
+                else chatReply("❌ Pattern draw fail ($r2). Lock screen khuli honi chahiye.")
+            }, 700)
+            return true
+        }
+
+        // ---- app lock save/delete/list ----
+        val appLockM = Regex("^app lock (.+)$").find(low)?.groupValues?.get(1)
+        if (appLockM != null) {
+            val rest = appLockM.trim()
+            when {
+                rest == "list" || rest == "list karo" || rest == "sab" -> {
+                    val locks = AppLockVault.list(this)
+                    if (locks.isEmpty()) chatReply("🔐 Koi app lock saved nahi.\nSave: app lock gallery pin 1234\nYa: app lock whatsapp pattern 1 5 9")
+                    else chatReply("🔐 Saved app locks:\n" + locks.joinToString("\n") { "• ${it.pkg.removePrefix("name:")} — ${AppLockVault.mask(it)}" + if (it.fails > 0) " ⚠️ ${it.fails} fail" else "" })
+                    return true
                 }
-                if (!tapped) AutoBotAccessibilityService.tapText("enter")
-                chatReply("🔓 Password type kar diya" + if (tapped) " + button bhi dabaya." else " — Enter/OK khud dabao.")
-            } else chatReply("⚠️ Screen par password box nahi mila. Pehle wo app kholo jis ka lock hai, phir 'unlock karo' bolo.")
+                rest.startsWith("delete ") || rest.startsWith("hatao ") || rest.startsWith("remove ") -> {
+                    val app = rest.substringAfter(" ").trim()
+                    val pkg = appLockResolver(app)
+                    val ok = AppLockVault.remove(this, pkg) || AppLockVault.remove(this, "name:${app.lowercase()}")
+                    chatReply(if (ok) "🗑 App lock delete: ${app}\n(ye lock ab bot laga kar nahi kholta)" else "❌ '$app' ka lock saved nahi tha.")
+                    return true
+                }
+                else -> {
+                    // app lock <app> pin <digits> / password <text> / pattern <seq>
+                    val m2 = Regex("^(.+?)\\s+(pin|password|pass|pattern|pin number)\\s+(.+)$").find(rest)
+                    if (m2 == null) { chatReply("🔐 Format:\n• app lock gallery pin 1234\n• app lock gallery password mera123\n• app lock gallery pattern 1 5 9 (ya pattern L)\n• app lock list | app lock delete gallery\n\n" + AppLockVault.PATTERN_HELP); return true }
+                    val (app, typeRaw, secretRaw) = m2.destructured
+                    val type = when { typeRaw.startsWith("pin") -> "pin"; typeRaw.startsWith("pattern") -> "pattern"; else -> "password" }
+                    var secret = secretRaw.trim()
+                    if (type == "pattern") {
+                        val seq = AppLockVault.parsePattern(secret)
+                        if (seq == null) { chatReply("❌ Pattern samajh nahi aaya.\n" + AppLockVault.PATTERN_HELP); return true }
+                        secret = AppLockVault.patternToSecret(seq)
+                    }
+                    if (type == "pin" && !Regex("^\\d{3,8}$").matches(secret)) { chatReply("❌ PIN sirf 3-8 digits hona chahiye. Tumne likha: ••••"); return true }
+                    val pkg = appLockResolver(app.trim())
+                    AppLockVault.set(this, pkg, type, secret)
+                    OfflineBrain.vaultSave(this, "app lock", if (type == "pattern") "(pattern: $secret)" else secret)
+                    chatReply("✅ ${app.trim().replaceFirstChar { it.uppercase() }} ka lock save ho gaya (${AppLockVault.typeLabel(type)}).\n🔒 Ab jab wo app khulegi, bot khud lock detect karke real PIN/password/pattern laga dega.\n⚠️ Secret kabhi chat mein wapas nahi likha jayega — safety ke liye.")
+                    if (type == "pattern") chatReply("📐 Confirm karo — tumhara pattern:\n" + AppLockVault.patternGrid(secret))
+                    return true
+                }
+            }
+        }
+
+        // ---- upgraded UNLOCK: live lock-type detect → real apply → verify → re-ask ----
+        if (low == "unlock" || low == "unlock karo" || low.contains("password laga do") || low.contains("password daal do") || low.contains("password type karo") || low.contains("pin laga do") || low.contains("pin daal do") || low.contains("pattern laga do") || low.contains("lock khol do")) {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            val fg = AutoBotAccessibilityService.foregroundPackage()
+            val entry = AppLockVault.get(this, fg) ?: AppLockVault.get(this, "app lock") ?: OfflineBrain.vaultGet(this, "app lock")?.let { pw ->
+                AppLockVault.LockEntry("app lock", if (pw.startsWith("(pattern:")) "pattern" else "password", pw.removePrefix("(pattern: ").removeSuffix(")"))
+            }
+            if (entry == null) { chatReply("⚠️ Koi lock saved nahi. Save karo:\n• app lock gallery pin 1234\n• app lock whatsapp pattern 1 5 9\n• ya: app lock ka password <password>"); return true }
+            val det = AutoBotAccessibilityService.detectLockType()
+            when {
+                det == "pattern" -> {
+                    if (entry.type != "pattern") { chatReply("⚠️ Screen par PATTERN lock hai, tumne ${AppLockVault.typeLabel(entry.type)} save karwaya hai. Batao: app lock <app> pattern 1 5 9 (grid ke liye 'pattern' likho)"); return true }
+                    chatReply("🖐 Pattern draw kar raha hoon...")
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        val r2 = AutoBotAccessibilityService.drawPattern(AppLockVault.secretToPattern(entry.secret))
+                        chatReply(if (r2 == "OK") "🔓 Pattern draw ho gaya." else "❌ Pattern draw fail ($r2)")
+                    }, 500)
+                }
+                det == "pin" || det == "password" -> {
+                    if (entry.type == "pattern") { chatReply("⚠️ Screen par ${AppLockVault.typeLabel(det)} ka box hai, tumne pattern save karwaya hai. Batao: app lock <app> ${if (det == "pin") "pin 1234" else "password xyz"}"); return true }
+                    val r1 = AutoBotAccessibilityService.typeText(entry.secret)
+                    if (r1 == "OK") {
+                        var tapped = false
+                        for (lbl in listOf("ok", "unlock", "submit", "done", "confirm", "enter")) {
+                            if (AutoBotAccessibilityService.tapText(lbl) == "OK") { tapped = true; break }
+                        }
+                        if (!tapped) AutoBotAccessibilityService.tapText("enter")
+                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                            val still = AutoBotAccessibilityService.detectLockType()
+                            if (still == "none") { AppLockVault.resetFails(this, entry.pkg); chatReply("🔓 Unlock ho gaya ✓") }
+                            else {
+                                val fails = AppLockVault.bumpFail(this, entry.pkg)
+                                if (fails >= 2) chatReply("⚠️ Sir, lagta hai apka lock change ho gaya hai (2 baar fail). Kindly Auto Bot ko naya lock bata dein:\n• app lock <app> pin <naya pin>\n• app lock <app> password <naya password>\n• app lock <app> pattern <naya pattern>\nPurana: ${AppLockVault.mask(entry)}")
+                                else chatReply("🤔 Lock abhi bhi on hai — ek aur baar try kar raha hoon ya khud check karo. Agar PIN change hua hai to batao: app lock <app> pin <naya>")
+                            }
+                        }, 1500)
+                        chatReply("🔓 ${if (entry.type == "pin") "PIN" else "Password"} type kar diya" + if (tapped) " + button dabaya." else " — Enter khud dabao.")
+                    } else chatReply("⚠️ Screen par password/PIN box nahi mila (detected: $det). Pehle wo app kholo jis ka lock hai, phir 'unlock karo' bolo.")
+                }
+                else -> chatReply("⚠️ Screen par koi lock nahi mila ($det). Pehle locked app kholo, phir 'unlock karo' bolo.")
+            }
             return true
         }
         if (low.contains("screen parho") || low.contains("screen padho") || low.contains("read screen") || low.contains("screen text") || low.contains("screen read")) {
