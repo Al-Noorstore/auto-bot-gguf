@@ -49,22 +49,24 @@ jobs:
       - name: Build AutoBot LITE APK
         run: |
           gradle assembleRelease -PliteBuild=true --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk AutoBot-GGUF-Lite-v4.0.apk
+          VER=$(grep versionName app/build.gradle | sed 's/.*isLite ? "\([0-9.]*\).*/\1/')
+          cp app/build/outputs/apk/release/app-release.apk "AutoBot-GGUF-Lite-v${VER}.apk"
 
       # ---------- AutoBot PRO (SmolLM + Qwen + Python) ----------
       - name: Build AutoBot PRO APK
         run: |
           gradle clean assembleRelease --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk AutoBot-GGUF-Pro-v4.0.apk
+          VER=$(grep versionName app/build.gradle | sed 's/.*isLite ? "\([0-9.]*\).*/\1/')
+          cp app/build/outputs/apk/release/app-release.apk "AutoBot-GGUF-Pro-v${VER}.apk"
 
       - name: Upload LITE APK
         uses: actions/upload-artifact@v4
         with:
           name: AutoBot-LITE-APK
-          path: AutoBot-GGUF-Lite-v4.0.apk
+          path: AutoBot-GGUF-Lite-*.apk
 
       - name: Upload PRO APK
         uses: actions/upload-artifact@v4
         with:
           name: AutoBot-PRO-APK
-          path: AutoBot-GGUF-Pro-v4.0.apk
+          path: AutoBot-GGUF-Pro-*.apk
