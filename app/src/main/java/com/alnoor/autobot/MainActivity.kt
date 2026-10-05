@@ -1267,6 +1267,54 @@ class MainActivity : AppCompatActivity() {
         else { val b = conn.inputStream.use { it.readBytes() }; conn.disconnect(); b }
     } catch (e: Exception) { null }
 
+    /** v4.6: GMAIL — raw SMTP (SSL 465) se email bhejo, App Password se */
+    private fun smtpSend(user: String, pass: String, to: String, subject: String, body: String): String {
+        return try {
+            val sock = javax.net.ssl.SSLSocketFactory.getDefault().createSocket("smtp.gmail.com", 465)
+            sock.soTimeout = 15000
+            val out2 = java.io.BufferedOutputStream(sock.getOutputStream())
+            val inp = java.io.BufferedReader(java.io.InputStreamReader(sock.getInputStream()))
+            fun send(cmd: String) { out2.write((cmd + "\r\n").toByteArray()); out2.flush() }
+            fun reply(): Pair<Int, String> {
+                val sb = StringBuilder(); var line: String?
+                while (true) {
+                    line = inp.readLine() ?: break
+                    sb.append(line).append("\n")
+                    if (line.length < 4 || line[3] == ' ') break
+                }
+                val t = sb.toString().trim()
+                return Pair(t.take(3).toIntOrNull() ?: 0, t)
+            }
+            reply()
+            send("EHLO autobot"); reply()
+            send("AUTH LOGIN"); reply()
+            send(android.util.Base64.encodeToString(user.toByteArray(), android.util.Base64.NO_WRAP)); reply()
+            send(android.util.Base64.encodeToString(pass.toByteArray(), android.util.Base64.NO_WRAP))
+            val (ac, ar) = reply()
+            if (ac != 235) { sock.close(); return "\u274C Login fail: ${ar.take(120)} \u2014 App Password sahi hai? (Google Account > Security > 2FA > App Passwords)" }
+            send("MAIL FROM:<$user>"); val (m1, mr1) = reply(); if (m1 != 250) { sock.close(); return "\u274C $mr1" }
+            send("RCPT TO:<$to>"); val (m2, mr2) = reply(); if (m2 != 250) { sock.close(); return "\u274C $mr2" }
+            send("DATA"); reply()
+            val encSub = "=?UTF-8?B?" + android.util.Base64.encodeToString(subject.toByteArray(), android.util.Base64.NO_WRAP) + "?="
+            send("From: Auto Bot <$user>\r\nTo: <$to>\r\nSubject: $encSub\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n$body\r\n.")
+            val (m3, mr3) = reply(); if (m3 != 250) { sock.close(); return "\u274C Body fail: $mr3" }
+            send("QUIT")
+            sock.close()
+            "\u2705 Email bhej diya: $to"
+        } catch (e: Exception) { "\u274C Email fail: ${e.message}" }
+    }
+
+    /** v4.6: GOOGLE SHEETS — user ke Apps Script WebApp se read/append */
+    private fun sheetsCall(url: String, id: String, sheet: String, action: String, values: String?): String {
+        val u = url + (if (url.contains("?")) "&" else "?") +
+            "action=" + java.net.URLEncoder.encode(action, "UTF-8") +
+            "&id=" + java.net.URLEncoder.encode(id, "UTF-8") +
+            "&sheet=" + java.net.URLEncoder.encode(sheet, "UTF-8") +
+            (if (values != null) "&values=" + java.net.URLEncoder.encode(values, "UTF-8") else "")
+        val (rc, rt) = TokenVault.http("GET", u, mapOf(), null)
+        return if (rc in 200..299) rt else "\u274C Sheets fail (HTTP $rc): ${rt.take(200)}"
+    }
+
     /** v4.5: GitHub cloud terminal — command chalao, output wapas (github run + agent mode dono yahan aate hain) */
     private fun ghCloudRun(token: String, full: String, command: String): String {
         val hdr = mapOf("Authorization" to "Bearer $token", "Accept" to "application/vnd.github+json")
@@ -2343,6 +2391,120 @@ class MainActivity : AppCompatActivity() {
             }
             return true
         }
+        // ---------- v4.6: GMAIL CONNECTOR ----------
+        if (low == "email" || low == "email status") {
+            val cred = TokenVault.get(this, "gmail")
+            chatReply(if (cred == null) "\uD83D\uDCE7 Gmail connected nahi.\nSetup: email setup <gmail-address> | <app-password>\n(Google Account > Security > 2FA on > App Passwords se 16-digit password lo)"
+                     else "\uD83D\uDCE7 Gmail connected: " + cred.substringBefore("|"))
+            return true
+        }
+        if (low.startsWith("email setup") || low.startsWith("email save")) {
+            val rest = if (msg.contains("setup", true)) msg.substringAfter("setup") else msg.substringAfter("save")
+            val bits = rest.split("|").map { it.trim() }
+            if (bits.size < 2 || !bits[0].contains("@") || bits[1].length < 8) {
+                chatReply("\u274C Format: email setup <gmail-address> | <app-password>")
+                return true
+            }
+            TokenVault.save(this, "gmail", bits[0] + "|" + bits[1])
+            chatReply("\uD83D\uDCE7 Gmail save ho gaya: ${bits[0]} (password masked: ${TokenVault.masked(bits[1])})\nAb: email bhejo <address> | <subject> | <message>")
+            return true
+        }
+        if (low.startsWith("email bhejo") || low.startsWith("email send")) {
+            val cred = TokenVault.get(this, "gmail")
+            if (cred == null) { chatReply("\u274C Pehle: email setup <gmail> | <app-password>"); return true }
+            val rest = if (low.startsWith("email bhejo")) msg.substringAfter("bhejo") else msg.substringAfter("send")
+            val bits = rest.trim().split("|", limit = 3).map { it.trim() }
+            if (bits.size < 3 || !bits[0].contains("@") || bits[2].isBlank()) {
+                chatReply("\u274C Format: email bhejo <address> | <subject> | <message>")
+                return true
+            }
+            chatReply("\uD83D\uDCE7 Email jaa raha hai...")
+            Thread {
+                val cb = cred.split("|", limit = 2)
+                val res = smtpSend(cb[0], cb.getOrNull(1) ?: "", bits[0], bits[1], bits[2])
+                runOnUiThread { chatReply(res) }
+            }.start()
+            return true
+        }
+        if (low.startsWith("email delete") || low == "email off") {
+            chatReply(if (TokenVault.delete(this, "gmail")) "\uD83D\uDCE7 Gmail disconnect ho gaya." else "\u274C Gmail connected nahi tha.")
+            return true
+        }
+
+        // ---------- v4.6: GOOGLE SHEETS CONNECTOR ----------
+        if (low.startsWith("sheets setup") || low.startsWith("sheet setup") || low.startsWith("sheets help")) {
+            val rest = if (low.startsWith("sheets help")) "" else msg.substringAfter("setup").trim()
+            if (rest.startsWith("http")) {
+                TokenVault.save(this, "sheets", rest)
+                chatReply("\uD83D\uDCCA Sheets connected!\nParho: sheet parho <sheet-id> | <page naam>\nLikho: sheet likho <sheet-id> | <page naam> | val1,val2,val3")
+            } else {
+                chatReply("""📊 *Google Sheets Setup (2 minute)*
+1. Apni Google Sheet kholo (browser mein)
+2. Extensions → Apps Script
+3. Ye code paste karo:
+
+function doGet(e){
+  var p = e.parameter;
+  var sh = SpreadsheetApp.openById(p.id).getSheetByName(p.sheet || 'Sheet1');
+  if (p.action == 'append') { sh.appendRow(JSON.parse(p.values)); return out('OK'); }
+  return out(JSON.stringify(sh.getDataRange().getValues()));
+}
+function out(s){ return ContentService.createTextOutput(s); }
+
+4. Deploy → New deployment → Web app → Access: Anyone → Deploy
+5. Jo URL mile, yahan bhejo: sheets setup <URL>
+(Sheet ID URL ka lamba hissa hai: docs.google.com/spreadsheets/d/<ID>/edit)""")
+            }
+            return true
+        }
+        if (low.startsWith("sheet parho ") || low.startsWith("sheet read ")) {
+            val url = TokenVault.get(this, "sheets")
+            if (url == null) { chatReply("\u274C Pehle setup: sheets help"); return true }
+            val rest = if (low.startsWith("sheet parho ")) msg.substringAfter("parho ") else msg.substringAfter("read ")
+            val bits = rest.split("|").map { it.trim() }
+            if (bits[0].isBlank()) { chatReply("\u274C Format: sheet parho <sheet-id> | <page naam (optional)>"); return true }
+            chatReply("\uD83D\uDCCA Sheet parh raha hoon...")
+            Thread {
+                val res = sheetsCall(url, bits[0], bits.getOrNull(1) ?: "Sheet1", "read", null)
+                val pretty = try {
+                    val arr = JSONArray(res)
+                    val sb = StringBuilder("\uD83D\uDCCA Data (" + arr.length() + " rows):\n")
+                    for (i in 0 until arr.length()) {
+                        if (i >= 25) { sb.append("...\n"); break }
+                        val row = arr.getJSONArray(i)
+                        sb.append("\u2022 ")
+                        for (j in 0 until row.length()) sb.append(row.get(j).toString()).append(" | ")
+                        sb.append("\n")
+                    }
+                    sb.toString()
+                } catch (_: Exception) { res.take(1500) }
+                runOnUiThread { chatReply(pretty.take(2500)) }
+            }.start()
+            return true
+        }
+        if (low.startsWith("sheet likho ") || low.startsWith("sheet write ")) {
+            val url = TokenVault.get(this, "sheets")
+            if (url == null) { chatReply("\u274C Pehle setup: sheets help"); return true }
+            val rest = if (low.startsWith("sheet likho ")) msg.substringAfter("likho ") else msg.substringAfter("write ")
+            val bits = rest.split("|", limit = 3).map { it.trim() }
+            if (bits.size < 3 || bits[0].isBlank() || bits[2].isBlank()) {
+                chatReply("\u274C Format: sheet likho <sheet-id> | <page naam> | val1,val2,val3")
+                return true
+            }
+            val arr = JSONArray()
+            for (v in bits[2].split(",")) arr.put(v.trim())
+            chatReply("\uD83D\uDCCA Sheet mein likh raha hoon...")
+            Thread {
+                val res = sheetsCall(url, bits[0], bits[1], "append", arr.toString())
+                runOnUiThread { chatReply(if (res.trim() == "OK") "\u2705 Row add ho gayi: " + bits[2] else res.take(800)) }
+            }.start()
+            return true
+        }
+        if (low.startsWith("sheets delete") || low.startsWith("sheet delete")) {
+            chatReply(if (TokenVault.delete(this, "sheets")) "\uD83D\uDCCA Sheets disconnect ho gaye." else "\u274C Sheets connected nahi the.")
+            return true
+        }
+
         // ---------- v4.5: AGENT MODE ----------
         if (low == "agent mode on" || low == "agent on") {
             getSharedPreferences("autobot", MODE_PRIVATE).edit().putBoolean("agent_mode", true).apply()
