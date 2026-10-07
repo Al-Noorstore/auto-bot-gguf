@@ -75,7 +75,21 @@ object AIBrain {
     /** v3.6: kya AI jawab de sakti hai? (GGUF model ya koi API key) — direct-chat ke liye */
     fun aiAvailable(ctx: Context): Boolean {
         try { if (GgufEngine.enabled(ctx) && LlamaBridge.available && GgufEngine.modelPresent(ctx)) return true } catch (_: Exception) {}
-        return try { KeyStore.load(ctx).any { it.enabled && it.key.isNotBlank() } } catch (_: Exception) { false }
+        try { if (KeyStore.load(ctx).any { it.enabled && it.key.isNotBlank() }) return true } catch (_: Exception) {}
+        // v4.7: GitHub AI fallback (PAT) bhi jawab de sakta hai
+        return githubAiOn(ctx) && githubFallbackKeys(ctx).isNotEmpty()
+    }
+
+    /** v4.7: GITHUB AI — toggle (admin panel / chat: github ai on-off) */
+    private fun githubAiOn(ctx: Context): Boolean =
+        try { ctx.getSharedPreferences("autobot", Context.MODE_PRIVATE).getBoolean("github_ai", true) } catch (_: Exception) { true }
+
+    /** v4.7: GITHUB AI fallback keys — TokenVault ke saare github tokens PAT ki tarah models.github.ai pe (multiple allowed) */
+    private fun githubFallbackKeys(ctx: Context): List<KeyStore.ApiKey> {
+        if (!githubAiOn(ctx)) return emptyList()
+        val model = try { ctx.getSharedPreferences("autobot", Context.MODE_PRIVATE).getString("github_ai_model", "") ?: "" } catch (_: Exception) { "" }
+        val toks = try { TokenVault.list(ctx).filter { it.key.startsWith("github") && it.value.isNotBlank() }.map { it.toPair() } } catch (_: Exception) { emptyList<Pair<String, String>>() }
+        return toks.map { KeyStore.ApiKey("GitHub", "GitHubAI:" + it.first, it.second, "https://models.github.ai/inference", model.ifBlank { "openai/gpt-4o-mini" }) }
     }
 
     fun ask(ctx: Context, question: String): String {
@@ -87,11 +101,16 @@ object AIBrain {
         val keys = KeyStore.load(ctx).filter { it.enabled && it.key.isNotBlank() }
         val active = keys.firstOrNull { it.active } ?: keys.firstOrNull()
         fun askApi(): String? {
-            if (active == null) return null
-            tryAsk(active, question)?.let { return it }
-            for (k in keys) {
-                if (k.label == active.label) continue
-                tryAsk(k, question)?.let { return "(🔑 $k.label se aaya — active key kaam nahi kar rahi thi)\n$it" }
+            if (active != null) {
+                tryAsk(active, question)?.let { return it }
+                for (k in keys) {
+                    if (k.label == active.label) continue
+                    tryAsk(k, question)?.let { return "(🔑 $k.label se aaya — active key kaam nahi kar rahi thi)\n$it" }
+                }
+            }
+            // v4.7: GITHUB AI FALLBACK — koi API key nahi / sab fail -> GitHub PAT se models.github.ai
+            for (gk in githubFallbackKeys(ctx)) {
+                tryAsk(gk, question)?.let { return "(🐙 GitHub AI se aaya — ${gk.label})\n$it" }
             }
             return null
         }
@@ -118,11 +137,17 @@ object AIBrain {
     /** v4.4: API-only answer (bugfix / code generation ke liye) — local fallback NAHI. null = key nahi ya fail */
     fun askApi(ctx: Context, prompt: String): String? {
         val keys = KeyStore.load(ctx).filter { it.enabled && it.key.isNotBlank() }
-        val active = keys.firstOrNull { it.active } ?: keys.firstOrNull() ?: return null
-        tryAsk(active, prompt)?.let { return it }
-        for (k in keys) {
-            if (k.label == active.label) continue
-            tryAsk(k, prompt)?.let { return it }
+        val active = keys.firstOrNull { it.active } ?: keys.firstOrNull()
+        if (active != null) {
+            tryAsk(active, prompt)?.let { return it }
+            for (k in keys) {
+                if (k.label == active.label) continue
+                tryAsk(k, prompt)?.let { return it }
+            }
+        }
+        // v4.7: GITHUB AI FALLBACK
+        for (gk in githubFallbackKeys(ctx)) {
+            tryAsk(gk, prompt)?.let { return it }
         }
         return null
     }
@@ -158,6 +183,7 @@ object AIBrain {
             sb.append("🧠 Is sawal ke liye AI chahiye, aur abhi koi API key connect nahi hai.\n\n")
         }
         sb.append("⚡ API key jodo:\n   api key <apni-key>\n(Free Gemini: aistudio.google.com/apikey)\n")
+        sb.append("\uD83D\uDC19 Ya GitHub PAT se AI: github ai token <PAT> (toggle: github ai on)")
         val ge = if (GgufEngine.enabled(ctx)) "ON" else "OFF ('gguf on' likho)"
         val err = try { GgufEngine.lastError() } catch (_: Exception) { null }
         sb.append("\n🧠 GGUF offline: $ge")

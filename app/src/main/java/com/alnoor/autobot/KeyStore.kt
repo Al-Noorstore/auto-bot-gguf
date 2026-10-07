@@ -24,7 +24,7 @@ object KeyStore {
 
     // Provider defaults — user sirf key paste kare, baaki khud fill ho jata hai
     val providers = listOf(
-        "Gemini", "OpenAI", "OpenRouter", "Groq",
+        "Gemini", "OpenAI", "OpenRouter", "Groq", "GitHub",
         "Ollama Cloud", "Ollama (PC/Local)", "Custom"
     )
 
@@ -33,6 +33,7 @@ object KeyStore {
         "OpenAI" -> "https://api.openai.com/v1"
         "OpenRouter" -> "https://openrouter.ai/api/v1"
         "Groq" -> "https://api.groq.com/openai/v1"
+        "GitHub" -> "https://models.github.ai/inference"
         "Ollama Cloud" -> "https://chat.ollama.com"
         "Ollama (PC/Local)" -> "http://localhost:11434"
         else -> ""
@@ -42,6 +43,7 @@ object KeyStore {
         "Gemini" -> "gemini-2.0-flash"
         "OpenAI" -> "gpt-4o-mini"
         "Groq" -> "llama-3.1-8b-instant"
+        "GitHub" -> "openai/gpt-4o-mini"
         "OpenRouter" -> "openrouter/auto"
         "Ollama Cloud", "Ollama (PC/Local)" -> "llama3.2"
         else -> ""

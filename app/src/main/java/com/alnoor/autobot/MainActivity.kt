@@ -3077,6 +3077,40 @@ ipa download
         }
 
 // ---------- v3.0: GITHUB (token se) ----------
+        // ---------- v4.7: GITHUB AI — PAT se AI jawab (API key ki jagah) ----------
+        if (low.startsWith("github ai")) {
+            val rest = low.removePrefix("github ai").trim()
+            val pref = getSharedPreferences("autobot", MODE_PRIVATE)
+            when {
+                rest == "on" -> { pref.edit().putBoolean("github_ai", true).apply(); chatReply("🐙 GitHub AI ON — koi API key na ho to prompt GitHub AI ke models ko jayega (PAT key ki jagah).") }
+                rest == "off" -> { pref.edit().putBoolean("github_ai", false).apply(); chatReply("🐙 GitHub AI OFF — ab jawab ke liye API key / offline model chahiye.") }
+                rest.startsWith("token") -> {
+                    val pat = msg.substringAfter("token", "").trim().removePrefix("add").trim()
+                    if (pat.length < 20) { chatReply("❌ Format: github ai token <PAT>\n(github.com → Settings → Developer settings → PAT — 'Models: Read' permission)"); return true }
+                    var i = 1
+                    while (TokenVault.get(this, "github-ai" + (if (i == 1) "" else "-$i")) != null) i++
+                    val label = "github-ai" + (if (i == 1) "" else "-$i")
+                    TokenVault.save(this, label, pat)
+                    chatReply("🐙 Token save: $label (${TokenVault.masked(pat)})\nMultiple tokens chal sakte hain — ye ${if (i == 1) "pehla" else "${i}wala"} hai. Admin panel mein bhi dikh raha hai.")
+                }
+                rest.startsWith("model ") -> {
+                    val m = rest.removePrefix("model").trim()
+                    if (m.isBlank()) chatReply("❌ Format: github ai model <model-id>\nJaise: github ai model openai/gpt-4o-mini")
+                    else { pref.edit().putString("github_ai_model", m).apply(); chatReply("🐙 GitHub AI model set: $m") }
+                }
+                else -> {
+                    val on = pref.getBoolean("github_ai", true)
+                    val toks = try { TokenVault.list(this).filter { it.key.startsWith("github") }.keys } catch (_: Exception) { emptySet() }
+                    val model = pref.getString("github_ai_model", "") ?: ""
+                    chatReply("🐙 GitHub AI: " + (if (on) "ON" else "OFF") +
+                        "\nTokens: " + (if (toks.isEmpty()) "koi nahi" else toks.joinToString(", ")) +
+                        "\nModel: " + (model.ifBlank { "openai/gpt-4o-mini (default)" }) +
+                        "\nCommands: github ai on/off | github ai token <PAT> | github ai model <id>")
+                }
+            }
+            return true
+        }
+
         if (low == "github" || low.startsWith("github ")) {
             val token = TokenVault.get(this, "github")
             if (token == null) { chatReply("🔑 GitHub token nahi hai. Pehle:\ntoken save github <aap-ka-personal-access-token>\n(token GitHub → Settings → Developer settings → Personal access tokens se milta hai)"); return true }
