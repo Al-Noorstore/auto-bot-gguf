@@ -935,16 +935,10 @@ Auto Bot mein hi chahiye? Likho: download qwen \uD83D\uDC40"""
                 val fits = listOf(Fit(0, 2500L, 130L), Fit(1, 4000L, 470L), Fit(2, 6000L, 790L))
                     .filter { totalRam >= it.needRam && freeMb >= it.sizeMb }
                 val sb = StringBuilder()
-                sb.append("📱 *Device check*
-")
-                sb.append("RAM: ${totalRam} MB total, ${availRam} MB free
-")
-                sb.append("Storage: ${freeMb} MB free
-
-")
-                if (totalRam < 4000L) sb.append("⚠️ *Kam RAM hai* — bada model phone ko hang kar sakta hai, sirf chhota model stable chalega.
-
-")
+                sb.append("📱 *Device check*\n")
+                sb.append("RAM: ${totalRam} MB total, ${availRam} MB free\n")
+                sb.append("Storage: ${freeMb} MB free\n\n")
+                if (totalRam < 4000L) sb.append("⚠️ *Kam RAM hai* — bada model phone ko hang kar sakta hai, sirf chhota model stable chalega.\n\n")
                 if (fits.isEmpty()) {
                     sb.append("❌ Itni jagah nahi kisi model ke liye. Storage kholo ya laptop par: 'laptop pr qwen download kaise karein'")
                     runOnUiThread { chatReply(sb.toString()) }
@@ -954,11 +948,8 @@ Auto Bot mein hi chahiye? Likho: download qwen \uD83D\uDC40"""
                 val m = ModelStore.presets[best]
                 sb.append("💡 Suggestion: *${m.name}*")
                 sb.append(if (heavy) " (lambi writing/bade kaam ke liye)" else " (roz-marra chat ke liye)")
-                sb.append(if (dl.contains(m.file)) "
-(abhi downloaded hai)" else "")
-                sb.append("
-
-Kaise chahiye? Auto Bot mein install kar doon, ya ZIP (Downloads folder) mein daal doon?")
+                sb.append(if (dl.contains(m.file)) "\n(abhi downloaded hai)" else "")
+                sb.append("\n\nKaise chahiye? Auto Bot mein install kar doon, ya ZIP (Downloads folder) mein daal doon?")
                 val arr = org.json.JSONArray()
                 for (f in fits) {
                     val mm = ModelStore.presets[f.idx]
@@ -1020,8 +1011,7 @@ Kaise chahiye? Auto Bot mein install kar doon, ya ZIP (Downloads folder) mein da
                                 }
                             }
                         } }
-                        res = "✅ ${m.name} ZIP Downloads mein save ho gaya: Download/$fname
-(${done / 1048576} MB)"
+                        res = "✅ ${m.name} ZIP Downloads mein save ho gaya: Download/$fname\n(${done / 1048576} MB)"
                     }
                 }
             } catch (e: Exception) { res = "❌ ZIP download fail: ${e.message}" }
@@ -2212,23 +2202,18 @@ Kaise chahiye? Auto Bot mein install kar doon, ya ZIP (Downloads folder) mein da
             Thread {
                 val have = GgufEngine.availableModels(this)
                 if (have.isEmpty()) {
-                    runOnUiThread { chatReply("📦 Abhi koi model downloaded nahi.
-" + GgufEngine.suggestModel(this)) }
+                    runOnUiThread { chatReply("📦 Abhi koi model downloaded nahi.\n" + GgufEngine.suggestModel(this)) }
                 } else {
-                    val sb = StringBuilder("🔄 *Downloaded models* — kaun sa use karo?
-
-")
+                    val sb = StringBuilder("🔄 *Downloaded models* — kaun sa use karo?\n\n")
                     val arr = org.json.JSONArray()
                     have.forEachIndexed { i, (name, sz) ->
                         val nm = name.removeSuffix(".gguf")
-                        sb.append("• $nm (${sz / 1048576}MB)
-")
+                        sb.append("• $nm (${sz / 1048576}MB)\n")
                         arr.put(org.json.JSONObject().put("label", "✅ $nm").put("action", "simset").put("phone", "model use $nm"))
                     }
                     arr.put(org.json.JSONObject().put("label", "🔄 Auto (RAM ke mutabiq)").put("action", "simset").put("phone", "model auto"))
                     arr.put(org.json.JSONObject().put("label", "⬇️ Naya model download").put("action", "simset").put("phone", "transformer download"))
-                    sb.append("
-(Install: 'transformer download' — RAM/storage check kar ke best suggest karunga)")
+                    sb.append("\n(Install: 'transformer download' — RAM/storage check kar ke best suggest karunga)")
                     runOnUiThread { chatReplyEx(sb.toString(), arr.toString()) }
                 }
             }.start()
