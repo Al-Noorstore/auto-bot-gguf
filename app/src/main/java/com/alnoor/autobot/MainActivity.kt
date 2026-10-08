@@ -1307,6 +1307,20 @@ Auto Bot mein hi chahiye? Likho: download qwen \uD83D\uDC40"""
         )
     }
 
+    /** v4.17: Chrome/Google app mein keyword search — hands-free, Accessibility ki zarurat nahi */
+    private fun chromeSearch(q: String): Boolean {
+        val url = "https://www.google.com/search?q=" + java.net.URLEncoder.encode(q, "UTF-8")
+        return try {
+            val i = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+            i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            try { i.setPackage("com.android.chrome"); startActivity(i) } catch (_: Exception) {
+                i.setPackage(null)
+                try { startActivity(i) } catch (_: Exception) { return false }
+            }
+            true
+        } catch (_: Exception) { false }
+    }
+
     private fun openAppByName(name: String): String {
         val raw = name.trim().lowercase()
         val n = raw.replace(Regex("\\s+"), " ").trim()
@@ -2835,6 +2849,25 @@ Auto Bot mein hi chahiye? Likho: download qwen \uD83D\uDC40"""
         }
 
 
+        // ---------- v4.17: CHROME/GOOGLE APP SEARCH (voice se bhi) ----------
+        if (low.startsWith("chrome search ") || low.startsWith("chrome mein search ") || low.startsWith("google chrome ") ||
+            low.startsWith("chrome par ") || low.startsWith("chrome pe ") || low.startsWith("chrome kholo search ") ||
+            low.startsWith("browser search ")) {
+            val q = when {
+                low.startsWith("chrome search ") -> low.removePrefix("chrome search ").trim()
+                low.startsWith("chrome mein search ") -> low.removePrefix("chrome mein search ").trim()
+                low.startsWith("google chrome ") -> low.removePrefix("google chrome ").trim()
+                low.startsWith("chrome kholo search ") -> low.removePrefix("chrome kholo search ").trim()
+                low.startsWith("browser search ") -> low.removePrefix("browser search ").trim()
+                low.startsWith("chrome par ") -> low.removePrefix("chrome par ").trim()
+                else -> low.removePrefix("chrome pe ").trim()
+            }
+            if (q.isBlank()) { chatReply("🔍 Kya search karna hai? e.g. chrome search mobile prices"); return true }
+            val ok = chromeSearch(q)
+            chatReply(if (ok) "🌐 Chrome mein search khol diya: $q
+(rezult parhne/sunne ke liye bolo: screen parho)" else "❌ Chrome nahi khula — browser check karo.")
+            return true
+        }
         if (low.startsWith("web search ") || low.startsWith("google ") || low.startsWith("search web ")) {
             val q = msg.substringAfter(" ").trim().let {
                 if (low.startsWith("web search ")) msg.substringAfter("search ").trim()
