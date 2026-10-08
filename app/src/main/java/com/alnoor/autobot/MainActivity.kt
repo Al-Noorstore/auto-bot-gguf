@@ -2864,8 +2864,7 @@ Auto Bot mein hi chahiye? Likho: download qwen \uD83D\uDC40"""
             }
             if (q.isBlank()) { chatReply("🔍 Kya search karna hai? e.g. chrome search mobile prices"); return true }
             val ok = chromeSearch(q)
-            chatReply(if (ok) "🌐 Chrome mein search khol diya: $q
-(rezult parhne/sunne ke liye bolo: screen parho)" else "❌ Chrome nahi khula — browser check karo.")
+            chatReply(if (ok) "🌐 Chrome mein search khol diya: $q\n(rezult parhne/sunne ke liye bolo: screen parho)" else "❌ Chrome nahi khula — browser check karo.")
             return true
         }
         if (low.startsWith("web search ") || low.startsWith("google ") || low.startsWith("search web ")) {
