@@ -797,7 +797,20 @@ $('msg').addEventListener('keydown', e => {
     // Native mode banner ab hidden (feature phir bhi active hai, sirf visual notice nahi dikhta)
     document.body.insertAdjacentHTML('afterbegin', '<div style="display:none;background:#0ea5b7;color:#04222a;padding:6px 14px;font-size:12px;font-weight:600;text-align:center">📱 Native mode ON — contacts phone mein save honge</div>');
     var mo = document.getElementById('sidebar');
-    if (mo) mo.insertAdjacentHTML('beforeend', '<button class="nav-item" onclick="AutoBotNative.openTerminal()"><span class="nav-ico">🖥️</span> Terminal</button><button class="nav-item" onclick="AutoBotNative.openNativePanel()"><span class="nav-ico">⚡</span> Native Powers</button><button class="nav-item" onclick="AutoBotNative.openSimDialer && AutoBotNative.openSimDialer()"><span class="nav-ico">📱</span> SIM Dialer</button><button class="nav-item" onclick="AutoBotNative.openSettings()"><span class="nav-ico">⚙️</span> Settings</button>');
+    if (mo) {
+      // v4.9: ek hi menu — duplicate SIM Dialer hatao, native items nav ke andar, Admin Panel add
+      var _nav = mo.querySelector('nav');
+      var _simWeb = mo.querySelector('button[data-view="sim"]'); if (_simWeb) _simWeb.remove();
+      var _acc = _nav ? _nav.querySelector('button[data-view="access"]') : null;
+      var _items = '<button class="nav-item" onclick="AutoBotNative.openTerminal()"><span class="nav-ico">🖥️</span> Terminal</button>' +
+        '<button class="nav-item" onclick="AutoBotNative.openNativePanel()"><span class="nav-ico">⚡</span> Native Powers</button>' +
+        '<button class="nav-item" onclick="AutoBotNative.openSimDialer && AutoBotNative.openSimDialer()"><span class="nav-ico">📱</span> SIM Dialer</button>' +
+        '<button class="nav-item" onclick="AutoBotNative.openAdminPanel && AutoBotNative.openAdminPanel()"><span class="nav-ico">🛡️</span> Admin Panel</button>' +
+        '<button class="nav-item" onclick="AutoBotNative.openSettings()"><span class="nav-ico">⚙️</span> Settings</button>';
+      if (_acc) _acc.insertAdjacentHTML('afterend', _items);
+      else if (_nav) _nav.insertAdjacentHTML('beforeend', _items);
+      else mo.insertAdjacentHTML('beforeend', _items);
+    }
   }
   // Purchase disclaimer ab static bar nahi — sirf jab purchase-related baat chal rahi ho tab chat mein reminder
   (function () {

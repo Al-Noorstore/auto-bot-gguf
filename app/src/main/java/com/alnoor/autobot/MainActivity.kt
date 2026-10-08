@@ -2686,7 +2686,11 @@ function out(s){ return ContentService.createTextOutput(s); }
 
 
         // ---------- v3.9.2: extra screen / automation ----------
-        if (low.startsWith("type ") || low.startsWith("likho ") || low.startsWith("write ")) {
+        // v4.9: "write thirsty crow" / "likho ..." = AI se likhwana. Sirf "type ..." (ya accessibility ON + chhota text) = screen typing.
+        val _isTypeCmd = low.startsWith("type ") ||
+            ((low.startsWith("likho ") || low.startsWith("write ")) && AutoBotAccessibilityService.isOn() &&
+                (low.contains(" in field") || low.contains(" field mein") || low.contains(" yahan") || low.contains(" here") || low.contains(" screen par")))
+        if (_isTypeCmd) {
             if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
             val text = msg.substringAfter(" ").trim()
             val res = AutoBotAccessibilityService.typeText(text)
@@ -3733,18 +3737,34 @@ ipa download
             return true
         }
         // Story / creative writing — better prompt path; avoid accessibility false match
-        if (Regex("(?i)(story|kahani|story\\s*likho|story\\s*lokho|write\\s*story|kahani\\s*likho)").containsMatchIn(low)
-            && !low.startsWith("open ") && !low.contains("accessibility")) {
-            val topic = msg.replace(Regex("(?i)(write\\s*)?(story|kahani)\\s*(likho|lokho|on|pr|pe)?"), " ")
+        if ((Regex("(?i)(story|kahani|kahaani|poem|nazm|essay|article|letter|khat|speech|paragraph|dastan)").containsMatchIn(low) ||
+                low.startsWith("write ") || low.startsWith("likho ") || low.startsWith("likh do ") || low.startsWith("compose "))
+            && !low.startsWith("open ") && !low.contains("accessibility") && !low.startsWith("type ") && !low.startsWith("write file") && !low.startsWith("code ")) {
+            // v4.9: kya likhna hai — poori request AI ko do, offline model (Smol/Qwen) bhi seedha likhe
+            val kind = when {
+                Regex("(?i)(poem|nazm)").containsMatchIn(low) -> "poem"
+                Regex("(?i)(essay|article|speech|paragraph)").containsMatchIn(low) -> "essay"
+                Regex("(?i)(letter|khat)").containsMatchIn(low) -> "letter"
+                else -> "story"
+            }
+            val topic = msg.replace(Regex("(?i)^(please\\s*)?(write|likho|likh do|compose)\\s*(me|mujhe|ek|a|an|the)?\\s*"), "")
+                .replace(Regex("(?i)\\b(story|kahani|kahaani|poem|nazm|essay|article|letter|khat|speech|paragraph|dastan)\\b\\s*(likho|lokho|on|pr|pe|about|ka|ki|ke bare mein)?"), " ")
                 .replace(Regex("\\s+"), " ").trim()
-                .ifBlank { "a kind teacher" }
+                .ifBlank { msg.trim() }
             showThinking()
             Thread {
-                val q = "Write a short complete story (8-12 lines) about: $topic. " +
-                    "Use simple English or Roman Urdu if user mixed languages. No word loops. Clear beginning, middle, end."
-                val ans = try { AIBrain.ask(this@MainActivity, q) } catch (_: Exception) { null }
-                    ?: try { GgufEngine.ask(this@MainActivity, q) } catch (_: Exception) { null }
-                    ?: "❌ Story abhi nahi bani. API key add karo ya stronger model: model list"
+                val q = when (kind) {
+                    "poem" -> "Write a short poem (8-12 lines) about: $topic. Simple words, clear rhyme."
+                    "essay" -> "Write a short clear essay (8-12 lines) about: $topic. Simple words."
+                    "letter" -> "Write a short polite letter about: $topic."
+                    else -> "Write a short complete story (10-14 lines) titled or about: $topic. " +
+                        "Give it a title, then beginning, middle and end with a moral. Simple English or Roman Urdu (match the user's language). No word loops."
+                }
+                // v4.9: offline model ko pehle chance (internet/API ke bina bhi chalna chahiye), phir API
+                val offline = try { GgufEngine.askLong(this@MainActivity, q) } catch (_: Exception) { null }
+                val ans = offline
+                    ?: try { AIBrain.ask(this@MainActivity, q) } catch (_: Exception) { null }
+                    ?: "\u274C Likh nahi saka. Offline model load nahi hua (gguf test chalao) ya API key add karo."
                 runOnUiThread { chatReply(ans) }
             }.start()
             return true

@@ -395,6 +395,48 @@ object GgufEngine {
         return false
     }
 
+
+    /** v4.9: story/poem/essay ke liye — zyada tokens, garbage retry. Offline Smol/Qwen dono. */
+    fun askLong(ctx: Context, question: String): String? {
+        if (!enabled(ctx) || !LlamaBridge.available) return null
+        val first = askWith(ctx, question, if (isLowRam(ctx)) 260 else 420, 0.7f)
+        if (first != null) return first
+        // ek aur koshish — kam temperature
+        return askWith(ctx, question, if (isLowRam(ctx)) 200 else 320, 0.5f)
+    }
+
+    private fun askWith(ctx: Context, question: String, maxTok: Int, temp: Float): String? {
+        if (loading) {
+            var waited = 0
+            while (loading && waited < 180_000) { try { Thread.sleep(400) } catch (_: InterruptedException) {}; waited += 400 }
+            if (loadedPath == null) return null
+        }
+        val path = try { pickModel(ctx) } catch (e: Exception) { lastError = "pick:${e.message}"; null } ?: return null
+        try {
+            if (loadedPath != path || !LlamaBridge.isLoaded()) {
+                loading = true
+                try {
+                    unload()
+                    val ctxSize = if (isLowRam(ctx)) 1024 else 2048
+                    val threads = if (isLowRam(ctx)) 2 else 0
+                    if (!LlamaBridge.load(path, ctxSize = ctxSize, threads = threads)) { lastError = "native_load_fail"; loading = false; return null }
+                    loadedPath = path
+                    lastError = null
+                } finally { loading = false }
+            }
+            val sys = "You are a creative writer. Write exactly what the user asks, in full sentences, on topic. " +
+                "No repeating words, no random names. Match the user's language (English or Roman Urdu)."
+            val prompt = "<|im_start|>system\n$sys<|im_end|>\n<|im_start|>user\n$question<|im_end|>\n<|im_start|>assistant\n"
+            val t0 = System.currentTimeMillis()
+            var ans = LlamaBridge.generate(prompt, maxTokens = maxTok, temp = temp, topP = 0.9f, topK = 40).trim()
+            ans = ans.substringBefore("<|im_end|>").substringBefore("<|endoftext|>").substringBefore("<|im_start|>").trim()
+            if (ans.length < 20 || isGarbageAnswer(ans)) { lastError = "garbage_output"; return null }
+            val name = File(path).nameWithoutExtension
+            val secs = (System.currentTimeMillis() - t0) / 1000.0
+            return "🧠 *GGUF offline* ($name, ${"%.0f".format(secs)}s):\n$ans"
+        } catch (e: Throwable) { lastError = "ask_exception:${e.message}"; return null }
+    }
+
     fun ask(ctx: Context, question: String): String? {
         if (!enabled(ctx) || !LlamaBridge.available) {
             lastError = if (!LlamaBridge.available) "native_lib_missing" else "engine_off"
