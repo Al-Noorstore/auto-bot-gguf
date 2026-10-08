@@ -419,16 +419,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     // shell engine: real Android sh, background mein bot bhi use karta hai
+    /** v4.14: shell env — HOME/TMPDIR/PATH har command ke saath export (var expansion + builtins fix) */
+    private fun shellEnvExports(): String {
+        val home = homeDir().absolutePath
+        val tmp = File(home, "tmp").apply { try { mkdirs() } catch (_: Exception) {} }
+        return "export HOME=" + shQuote(home) + "; export TMPDIR=" + shQuote(tmp.absolutePath) +
+            "; export TERM=xterm-256color; export LANG=C.UTF-8; " + DepStore.pathExport(this) +
+            "; export PATH=/system/bin:/system/xbin:/vendor/bin:\$PATH"
+    }
+
     private fun runShell(cmd: String, fromChat: Boolean = false, label: String = "$") {
         val sess = termActive()
         appendTermTo(sess, "\n$ $cmd\n")
         Thread {
             var out = ""
             try {
-                if (cmd.trim().startsWith("py ")) { runPython(cmd.trim().substring(3).removeSurrounding("\""), fromChat); appendTermTo(sess, "$ "); return@Thread }
-                if (cmd.trim().startsWith("pip install ")) { pipInstall(cmd.trim().substring(12), fromChat); appendTermTo(sess, "$ "); return@Thread }
+                if (cmd.trim().startsWith("py ")) { runPython(cmd.trim().substring(3).removeSurrounding("\""), fromChat); return@Thread }
+                if (cmd.trim().startsWith("pip install ")) { pipInstall(cmd.trim().substring(12), fromChat); return@Thread }
                 val depHandled = handleDepCommand(cmd.trim(), fromChat, sess)
-                if (depHandled) { appendTermTo(sess, "$ "); return@Thread }
+                if (depHandled) { return@Thread }
                 if (cmd.trim() == "root" || cmd.trim() == "su" || cmd.trim() == "whoami") {
                     val granted = rootAvailable()
                     appendTerm(if (granted) "[ROOT] \u2705 Root MILA \u2014 ab commands root (su) shell se chalenge. Full access!" else "[ROOT] \u274C Root nahi \u2014 normal sh shell (app sandbox). Root commands nahi chalenge.")
@@ -454,6 +463,8 @@ class MainActivity : AppCompatActivity() {
                         sb.append("pwd -> ").append(t2.out.joinToString(" ").ifBlank { "NO OUTPUT (code ${t2.code})" }).append("\n")
                         val t3 = Shell.cmd("echo \$PATH").exec()
                         sb.append("PATH -> ").append(t3.out.joinToString(" ")).append("\n")
+                        val t4 = Shell.cmd(shellEnvExports() + "; echo \$HOME; pwd; echo \$0").exec()
+                        sb.append("HOME -> ").append(t4.out.joinToString(" ")).append("\n")
                     }
                     sb.append("tab cwd: ").append(cwd)
                     out = sb.toString()
@@ -464,10 +475,12 @@ class MainActivity : AppCompatActivity() {
                     } else if (cwd != homeDir().absolutePath) {
                         toRun = "cd ${shQuote(cwd)} && { ${cmd}; }"
                     }
+                    var r127 = false
                     val sh = mainShell()
                     if (sh != null) {
                         try {
-                            val r = Shell.cmd(DepStore.pathExport(this@MainActivity) + "; cd " + shQuote(cwd) + "; " + toRun).exec()
+                            val r = Shell.cmd(shellEnvExports() + "; cd " + shQuote(cwd) + "; " + toRun).exec()
+                            if (r.code == 127) r127 = true
                             var o = r.out.joinToString("\n")
                             val e = r.err.joinToString("\n")
                             if (isCd) {
@@ -483,9 +496,10 @@ class MainActivity : AppCompatActivity() {
                                 if (isEmpty()) append(if (r.isSuccess) "(no output, exit ok)" else "(exit ${r.code})")
                             }
                         } catch (e: Exception) { out = "Error: " + e.message }
-                    } else {
-                        val wrapped = DepStore.pathExport(this@MainActivity) + "; " + toRun
-                        val p = ProcessBuilder("sh", "-c", wrapped)
+                    }
+                    if (sh == null || r127) {
+                        val wrapped = shellEnvExports() + "; " + toRun
+                        val p = ProcessBuilder("/system/bin/sh", "-c", wrapped)
                             .directory(File(cwd))
                             .redirectErrorStream(true)
                             .start()
@@ -503,7 +517,7 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) { out = "Error: " + e.message }
             val res = out.trim().take(3000)
             runOnUiThread {
-                appendTermTo(sess, res + "\n$ ")
+                appendTermTo(sess, res + "\n")
                 if (fromChat) chatReply(if (res.isEmpty() || res == "(no output, exit ok)") "✅ Command chal gaya: $cmd" else "\n$res")
             }
         }.start()
