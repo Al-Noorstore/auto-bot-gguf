@@ -83,6 +83,8 @@ object SimDialer {
     fun placeCall(ctx: Context, phone: String, slot: Int?): String {
         val num = phone.filter { it.isDigit() || it == '+' }
         if (num.length < 7) return "❌ Number short: $phone"
+        // v4.12: AGAIN-CALL — har call ka number yaad rakho ("again" = redial)
+        try { ctx.getSharedPreferences("autobot", Context.MODE_PRIVATE).edit().putString("last_call_num", num).putLong("last_call_time", System.currentTimeMillis()).apply() } catch (_: Exception) {}
         val uri = Uri.fromParts("tel", num, null)
         return try {
             if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.CALL_PHONE)

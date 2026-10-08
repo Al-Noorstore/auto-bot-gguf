@@ -785,6 +785,37 @@ $('msg').addEventListener('keydown', e => {
     chatPush(window.__lastLocalMsg || '', t);
   };
   /* v2.6 offline brain: buttons wala reply (call/end-call/whatsapp buttons chat mein) */
+/* v4.12: word-by-word typing — ChatGPT jaisa AI answer */
+  window.__localBotStream = function (t) {
+    var tp = document.getElementById('typing'); if (tp) tp.remove();
+    var s = (t || '').trim();
+    if (!s) return;
+    if (window.__lastLocalMsg) ensureChat(window.__lastLocalMsg);
+    var d = document.createElement('div');
+    d.className = 'msg bot';
+    var bcol = document.createElement('div'); bcol.className = 'bcol';
+    var bub = document.createElement('div'); bub.className = 'bubble';
+    var inner = document.createElement('span');
+    bub.appendChild(inner);
+    var cr = document.createElement('div'); cr.className = 'copyrow';
+    cr.innerHTML = '<button class="copybtn" onclick="copyBubble(this)">&#10697; Copy</button>';
+    bcol.appendChild(bub); bcol.appendChild(cr); d.appendChild(bcol);
+    $('msgs').appendChild(d);
+    $('view').scrollTop = $('view').scrollHeight;
+    var words = s.split(/(\s+)/);
+    var i = 0, cur = '';
+    (function step() {
+      if (i >= words.length) {
+        inner.textContent = cur;
+        chatPush(window.__lastLocalMsg || '', s);
+        return;
+      }
+      cur += words[i++];
+      inner.textContent = cur + '\u258D';
+      var v = $('view'); if (v) v.scrollTop = v.scrollHeight;
+      setTimeout(step, 22);
+    })();
+  };
   window.__localBotReplyEx = function (t, btns) {
     $('typing') && $('typing').remove();
     var d = document.createElement('div');

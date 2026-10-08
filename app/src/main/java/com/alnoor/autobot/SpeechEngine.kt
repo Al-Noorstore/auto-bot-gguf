@@ -102,6 +102,15 @@ object SpeechEngine {
                     }
                 }
             }
+            installZipFile(ctx, m, tmp, out, progress)
+        } catch (e: Exception) {
+            "❌ Voice model download fail: ${e.message}"
+        }
+    }
+
+    /** v4.12: zip -> model install — download() aur bundled asset dono yahi use karte hain */
+    private fun installZipFile(ctx: Context, m: VoiceModel, tmp: File, out: File, progress: (String) -> Unit): String {
+        return try {
             progress("📦 ${m.display} unpack ho raha hai...")
             val parent = File(out.parentFile.path)
             val tmpDir = File(parent, "_tmp_" + m.name)
@@ -135,9 +144,23 @@ object SpeechEngine {
             if (!File(out, "conf").exists() && !File(out, "AM").exists()) return "❌ Unzip fail — model files missing."
             if (pref(ctx).getString("voice_model", null) == null) pref(ctx).edit().putString("voice_model", m.name).apply()
             "✅ ${m.display} ready! Ab mic button 🎤 dabao ya \"mic on\" likho — bina internet bologe, main samajh lunga."
+
         } catch (e: Exception) {
-            "❌ Voice model download fail: ${e.message}"
+            "❌ Voice model install fail: ${e.message}"
         }
+    }
+
+    /** v4.12: BUNDLED OFFLINE MIC — APK mein model already included (sab versions).
+     *  Pehli app run par extract ho jata hai — internet ki zaroorat nahi. */
+    fun ensureBundled(ctx: Context, progress: (String) -> Unit): String {
+        val m = MODELS.firstOrNull { it.name == "urdu-hindi" } ?: return ""
+        val out = dir(ctx, m)
+        if (out.exists()) return ""
+        return try {
+            val tmp = File(ctx.cacheDir, m.name + ".zip")
+            ctx.assets.open("vosk-bundled.zip").use { input -> FileOutputStream(tmp).use { fos -> input.copyTo(fos) } }
+            installZipFile(ctx, m, tmp, out, progress)
+        } catch (_: Exception) { "" } // asset na mile to normal download raasta hazir hai
     }
 
     fun delete(ctx: Context, name: String): String {

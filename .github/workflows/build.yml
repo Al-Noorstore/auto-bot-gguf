@@ -46,6 +46,13 @@ jobs:
           ls -la app/src/pro/assets/models/
 
       # ---------- AutoBot LITE (SmolLM bundled, no Python — low-RAM safe) ----------
+      # ---------- v4.12: OFFLINE MIC BUNDLED (all APKs — internet-free voice) ----------
+      - name: Bundle Vosk voice model (offline mic)
+        run: |
+          curl -L --fail --retry 3 -o app/src/main/assets/vosk-bundled.zip \
+            https://alphacephei.com/vosk/models/vosk-model-small-hi-0.22.zip
+          ls -la app/src/main/assets/
+
       - name: Build AutoBot LITE APK
         run: |
           gradle assembleRelease -PliteBuild=true --no-daemon

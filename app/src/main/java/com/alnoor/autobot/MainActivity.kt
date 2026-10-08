@@ -547,6 +547,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** v4.12: word-by-word ChatGPT-jaisa jawab (sirf AI answers) */
+    private fun chatReplyStream(text: String) {
+        if (jarvisOn) try { TtsBox.speak(this, text.replace(Regex("[*_#`>]"), " ").replace(Regex("(?im)^TASK:.*$"), " ").take(600)) } catch (_: Exception) {}
+        runOnUiThread {
+            try { webView.evaluateJavascript("window.__localBotStream(" + org.json.JSONObject.quote(text) + ")", null) }
+            catch (e: Exception) { chatReply(text) }
+        }
+    }
+
     private fun chatReply(text: String) {
         // v4.11: Jarvis mode ON ho to jawab bol ke bhi sunao
         if (jarvisOn) try { TtsBox.speak(this, text.replace(Regex("[*_#`>]"), " ").replace(Regex("(?im)^TASK:.*$"), " ").take(600)) } catch (_: Exception) {}
@@ -998,6 +1007,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startSmartCall(name: String, phone: String, forcedSim: Int?) {
+        // v4.12: AGAIN-CALL — naam bhi yaad rakho
+        try { getSharedPreferences("autobot", MODE_PRIVATE).edit().putString("last_call_name", name).apply() } catch (_: Exception) {}
         // v4.2 priority: chat mein bola (forcedSim) > contact ki aadat (learned) > default setting > poochho
         val learned = SimDialer.contactSim(this, phone)
         val slot = forcedSim ?: learned ?: SimDialer.defaultSlot(this).takeIf { it >= 0 }
@@ -1134,6 +1145,8 @@ class MainActivity : AppCompatActivity() {
         }
         shellInit()
         super.onCreate(savedInstanceState)
+        // v4.12: OFFLINE MIC PRE-BUNDLED — APK mein voice model included; pehli run par extract (ek baar, background)
+        Thread { try { val r = SpeechEngine.ensureBundled(this) { }; if (r.isNotBlank()) appendTerm("\uD83C\uDFA4 $r") } catch (_: Exception) {} }.start()
         Thread.setDefaultUncaughtExceptionHandler(CrashLogger(this))
         // v3.7: STARTUP PRELOAD — GGUF model background mein ready ho jata hai,
         // tak ke pehla sawal 2-3 min ki silence ke bajaye foran jawab de (LITE par silently skip)
@@ -1591,7 +1604,59 @@ class MainActivity : AppCompatActivity() {
         }
         // ---------- OFFLINE BRAIN (v2.6): bina API key / bina model ke bhi ye commands chalete hain ----------
         try {
+            
+            // ---------- v4.12: AGAIN CALL — "again" = last number redial; "again call to X" = desired person ----------
+            val _againRedial = low == "again" || low == "again call" || low == "again karo" || low == "again call karo" ||
+                low == "dobara" || low == "dobara call" || low == "dobara call karo" || low == "dobara karo" ||
+                low == "phir se call" || low == "phir se call karo" || low == "call again"
+            val _againTo = Regex("(?i)^(again|phir se|dobara)\\s+call\\s*(to|ko|kar\\s*(na|ni)?)?\\s+(.+)$").find(low)
+            val _nextIs = Regex("(?i)^next\\s+call(\\s+is|\\s+to|\\s+ko)?\\s+(.+)$").find(low)
+            val _nextAmb = Regex("(?i)^(again|phir se|dobara)\\s+call(\\s+to|\\s+ko|\\s+karo|\\s+kro)?\\s*$").containsMatchIn(low) ||
+                Regex("(?i)^next\\s+call(\\s+to|\\s+ko|\\s+is)?\\s*(next|number|kis\\s*ko|kisko|naam|name)?\\s*$").containsMatchIn(low)
+            if (low == "last call" || low == "last call number" || low == "pichli call") {
+                val _p = getSharedPreferences("autobot", MODE_PRIVATE)
+                val _n = _p.getString("last_call_num", "") ?: ""
+                val _nm = _p.getString("last_call_name", "") ?: ""
+                if (_n.isNotBlank()) chatReply("\uD83D\uDCDE Last call: ${_nm.ifBlank { "Unknown" }} \u2022 $_n\n'again' likho to dobara call ho jayegi.")
+                else chatReply("Abhi koi call nahi hui.")
+                return true
+            }
+            if (_againRedial || _againTo != null || _nextIs != null || _nextAmb) {
+                val _p = getSharedPreferences("autobot", MODE_PRIVATE)
+                val lastNum = _p.getString("last_call_num", "") ?: ""
+                val lastName = _p.getString("last_call_name", "") ?: ""
+                val raw = (_againTo?.groupValues?.get(5) ?: _nextIs?.groupValues?.get(2))?.trim() ?: ""
+                val unClear = raw.isBlank() || Regex("(?i)^(next(\\s+number)?|agla(\\s+number)?|kisko|kis\\s*ko|naam|name|kaun|koi|dusra)(\\?)*$").containsMatchIn(raw)
+                when {
+                    !unClear -> {
+                        // user ne desired person bata diya — seedha call karo
+                        val forcedSim = SimDialer.parseSimFromText(raw)
+                        val tgt = raw.replace(Regex("(?i)\\s*sim\\s*[12one twoekdo]+\\s*"), " ").trim()
+                        val phoneDirect = Regex("(\\+?\\d[\\d\\s-]{6,}\\d)").find(tgt)?.value?.replace(Regex("[\\s-]"), "")
+                        val hits = if (phoneDirect != null) listOf(tgt to phoneDirect) else resolveCallTargets(tgt)
+                        when {
+                            phoneDirect != null -> startSmartCall(phoneDirect, phoneDirect, forcedSim)
+                            hits.size == 1 -> startSmartCall(hits[0].first, hits[0].second, forcedSim)
+                            hits.isEmpty() -> chatReply("\u274C \"$tgt\" nahi mila.\nNaam ya number dobara likho" + (if (lastNum.isNotBlank()) "\nMisal: again call to ${lastName.ifBlank { lastNum }}\nYa sirf 'again' — last call (${lastName.ifBlank { "" }} $lastNum) dobara ho jayegi." else "."))
+                            else -> {
+                                val sb = StringBuilder("\uD83D\uDCDE Kayi matches — kis ko?\n")
+                                hits.take(10).forEachIndexed { i, pr -> sb.append("${i + 1}. ${pr.first} — ${pr.second}\n") }
+                                chatReply(sb.append("Poora naam ya number likho.").toString())
+                            }
+                        }
+                    }
+                    lastNum.isNotBlank() && (_againRedial || raw.isBlank()) -> {
+                        // sirf "again" — exact last number dobara
+                        chatReply("\uD83D\uDD01 Again — last call dobara: ${lastName.ifBlank { "" }} $lastNum")
+                        startSmartCall(lastName.ifBlank { lastNum }, lastNum, null)
+                    }
+                    lastNum.isNotBlank() -> chatReply("\uD83E\uDD14 Kisko call karni hai? Naam ya number likho:\n\u2022 again call to amir\n\u2022 next call is 03221234567\nYa sirf 'again' likho — last call (${lastName.ifBlank { "" }} $lastNum) dobara ho jayegi.")
+                    else -> chatReply("\uD83E\uDD14 Kisko call karni hai? Naam ya number bolo. (Abhi koi last call bhi nahi hai.)")
+                }
+                return true
+            }
             // ---------- v4.8: SCHEDULED CALL — name/number + time -> waqt pe khud call ----------
+
             if (low.contains("call") && !low.contains("whatsapp") && !low.startsWith("wa ") && !low.contains("github")) {
                 val ct = parseCallTime(low)
                 if (ct != null) {
@@ -3772,7 +3837,7 @@ ipa download
                 val ans = offline
                     ?: try { AIBrain.ask(this@MainActivity, q) } catch (_: Exception) { null }
                     ?: "\u274C Likh nahi saka. Offline model load nahi hua (gguf test chalao) ya API key add karo."
-                runOnUiThread { chatReply(ans) }
+                runOnUiThread { chatReplyStream(ans) }
             }.start()
             return true
         }
@@ -3833,7 +3898,7 @@ ipa download
                 // v4.10: TASK INTENT — AI ne "TASK: <command>" bola to khud chala do (ChatGPT-style + real actions)
                 val tasks = try { Regex("(?im)^\\s*TASK:\\s*(.+?)\\s*$").findAll(ans).map { it.groupValues[1].trim() }.filter { it.length in 2..120 }.take(3).toList() } catch (_: Exception) { emptyList() }
                 val shown = if (tasks.isEmpty()) ans else ans.replace(Regex("(?im)^\\s*TASK:.*$"), "").trim()
-                chatReply(shown.ifBlank { "✅ Theek hai, task chala raha hoon..." })
+                chatReplyStream(shown.ifBlank { "✅ Theek hai, task chala raha hoon..." })
                 if (tasks.isNotEmpty() && aiTaskDepth < 2) {
                     aiTaskDepth++
                     try { for (t in tasks) { chatReply("⚙️ Task chalata hoon: $t"); runCommand(t.lowercase(), t) } } catch (_: Exception) {}
