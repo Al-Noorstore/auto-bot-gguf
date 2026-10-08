@@ -36,6 +36,15 @@
   nav { flex: 1; overflow-y: auto; padding: 6px 8px; }
   .nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; cursor: pointer; color: var(--text); font-size: 14px; margin-bottom: 2px; border: none; background: none; width: 100%; text-align: left; }
   .nav-item:hover { background: var(--hov); }
+/* v4.13: menu bar recent chats (ChatGPT style) */
+#menu-recent-wrap { padding: 4px 8px 8px; border-top: 1px solid var(--border); }
+.menu-recent-h { padding: 8px 6px 4px; font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--muted); }
+.mchat { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; color: var(--text); }
+.mchat:hover { background: var(--hov); }
+.mchat .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mchat .x { border: none; background: none; color: inherit; opacity: .45; cursor: pointer; font-size: 12px; padding: 2px 4px; }
+.mchat .x:hover { opacity: 1; }
+
   .nav-item.active { background: var(--hov); }
   .nav-ico { width: 18px; text-align: center; }
   .side-bot { padding: 12px 14px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); }
@@ -237,6 +246,10 @@
     <button class="nav-item" data-view="access" onclick="showView('access')"><span class="nav-ico">♿</span> Accessibility</button>
     <button class="nav-item" onclick="toggleTheme()"><span class="nav-ico" id="theme-ico">🌙</span> <span id="theme-label">Dark mode</span></button>
   </nav>
+  <div id="menu-recent-wrap" style="display:none">
+    <div class="menu-recent-h">Recent Chats</div>
+    <div id="menu-recent"></div>
+  </div>
   <div class="side-bot" id="side-bot">Auto Bot <span id="app-ver">v3.1</span> · e-commerce automation<br>Developed by Mr Wishal Noor 👑</div>
 </aside>
 
@@ -389,11 +402,32 @@ async function post(route, body) { const r = await fetch(API + '/' + route, { me
 function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function saveChat() { localStorage.setItem('ab_chat', JSON.stringify(chatHist.slice(-60))); }
 function isMobile() { return window.innerWidth <= 768; }
+function refreshMenuRecent() { // v4.13: menu bar mein recent chats (ChatGPT jaisa)
+  var w = document.getElementById('menu-recent-wrap'); if (!w) return;
+  var el = document.getElementById('menu-recent'); if (!el) return;
+  var a = chatsAll().slice(0, 12);
+  w.style.display = a.length ? 'block' : 'none';
+  el.innerHTML = '';
+  a.forEach(function (c) {
+    var d = document.createElement('div'); d.className = 'mchat';
+    d.onclick = function (e) {
+      if (e.target.closest('.x')) return;
+      openChat(c.id);
+      if (typeof isMobile === 'function' && isMobile() && $('sidebar').classList.contains('open')) toggleSidebar();
+    };
+    var t = document.createElement('span'); t.className = 't'; t.textContent = c.title || 'New chat';
+    var x = document.createElement('button'); x.className = 'x'; x.innerHTML = '&#10005;'; x.title = 'Delete';
+    x.onclick = function () { deleteChat(c.id); };
+    d.appendChild(t); d.appendChild(x); el.appendChild(d);
+  });
+}
+
 function toggleSidebar() {
   if (!isMobile()) return;
   $('sidebar').classList.toggle('open');
   $('overlay').style.display = $('sidebar').classList.contains('open') ? 'block' : 'none';
-}
+  try { refreshMenuRecent(); } catch (e) {}
+document.addEventListener('DOMContentLoaded', function () { try { refreshMenuRecent(); } catch (e) {} });
 
 /* ---------- views ---------- */
 function showView(v) {
@@ -432,6 +466,7 @@ function chatPush(u, b) {
   const a = chatsAll(); const i = a.findIndex(x => x.id === c.id);
   if (i >= 0) { a.splice(i, 1); a.unshift(c); chatsPut(a); }
 }
+try { refreshMenuRecent(); } catch (e) {}
 function openChat(id) {
   const c = chatById(id); if (!c) return;
   curChat = id; localStorage.setItem('ab_last_chat', String(id));

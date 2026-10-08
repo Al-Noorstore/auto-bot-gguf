@@ -556,6 +556,54 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** v4.13: AI model info — ChatGPT-jaisi guidance (offline bhi milti hai) */
+    private val MODEL_INFO_ABOUT = """\uD83E\uDD16 AUTO BOT KA AI — QWEN / SMOL / API (sab kuch samjho)
+
+\u2022 Qwen kya hai?
+Alibaba ka open-source AI model (LLM family). ChatGPT jaise hi sawal-jawab karta hai, lekin ye APK ke andar hi chalta hai — aapka data phone se kabhi bahar nahi jata. Roman Urdu/Hindi aur English samajhta hai.
+
+\u2022 Auto Bot ke andar kaunse models hain?
+- SmolLM2-135M: chhota model (~105MB) — har phone pe chalta hai, fast jawab.
+- Qwen 0.5B (GGUF Q4): thora bara (~400MB) — behtar quality jawab (PRO builds).
+Dono offline hain: bina internet, bina API key, bina kisi cost.
+
+\u2022 Offline AI vs API key (Gemini/OpenAI):
+- Offline: private + free, lekin chhota dimag — choti-moti baatein, commands, chhoti writing.
+- API key: internet wala bada AI — sabse smart, lambi reasoning ke liye best.
+- GitHub AI (PAT token): free internet AI — na key ka kharch, na offline ki limit.
+Auto Bot khud choose karta hai (auto mode): API/GitHub AI mile to wo, warna offline Qwen/Smol.
+
+\u2022 Auto Bot mein download karna ho? Likho:
+- download qwen
+- download smol
+Model dekhne/switch: model list | model use qwen | model use smol
+
+\u2022 Laptop/PC pr offline AI chahiye? Likho: laptop pr qwen download kaise karein (steps mil jayenge — Ollama/LM Studio)."""
+
+    private val MODEL_INFO_LAPTOP = """\uD83D\uDCBB LAPTOP/PC PR OFFLINE AI — STEP BY STEP (Ollama / LM Studio / llama.cpp)
+
+1\uFE0F\u20E3 OLLAMA (sabse aasan tareeqa):
+- Browser mein jao: ollama.com \u2192 Download dabao (Windows / Mac / Linux) \u2192 install karo.
+- Terminal khulo (Windows mein CMD/PowerShell) aur likho:
+  ollama run qwen2.5:0.5b
+- Pehli baar model khud download hoga (~400MB — internet sirf pehli baar chahiye).
+- Chat UI ke liye: "Open WebUI" ya "Chatbox" install karo \u2192 Ollama se connect \u2192 ChatGPT jaisa screen ready.
+- Bare models (zyada RAM): ollama run qwen2.5:3b ya qwen2.5:7b
+
+2\uFE0F\u20E3 LM STUDIO (bina command line — sabse simple):
+- lmstudio.ai se app download karo \u2192 install.
+- Left menu \u2192 Search \u2192 "Qwen" likho \u2192 jo model pasand aaye uspe Download.
+- Chat tab kholo \u2192 model select \u2192 baat shuru. GGUF files — Auto Bot ke andar wale format jaisa hi.
+
+3\uFE0F\u20E3 HUGGING FACE + LLAMA.CPP (advanced):
+- huggingface.co pr "Qwen GGUF Q4_K_M" search karo \u2192 model file download.
+- llama.cpp install karo (GitHub: ggml-org/llama.cpp) \u2192 build/release download.
+- Command: llama-server -m model.gguf \u2192 browser mein localhost kholo \u2192 chat ready.
+
+\uD83D\uDCCA Requirements: chhote models (0.5B-3B) = 8GB RAM theek. Bare models (7B+) = 16GB RAM better. Sab kuch local — internet sirr download ke waqt.
+
+Auto Bot mein hi chahiye? Likho: download qwen \uD83D\uDC40"""
+
     private fun chatReply(text: String) {
         // v4.11: Jarvis mode ON ho to jawab bol ke bhi sunao
         if (jarvisOn) try { TtsBox.speak(this, text.replace(Regex("[*_#`>]"), " ").replace(Regex("(?im)^TASK:.*$"), " ").take(600)) } catch (_: Exception) {}
@@ -1827,6 +1875,38 @@ class MainActivity : AppCompatActivity() {
         if (low == "jarvis on" || low == "jarvis mode on" || low == "jarvis start" || low == "jarvis kholo") { runOnUiThread { jarvisStart() }; return true }
         if (low == "jarvis off" || low == "jarvis mode off" || low == "jarvis band" || low == "jarvis stop" || low == "jarvis band karo") { runOnUiThread { jarvisStop() }; return true }
         if (low == "jarvis" || low == "jarvis status") { chatReply(if (jarvisOn) "🟢 Jarvis mode ON — main sun raha hoon. Band: 'jarvis off'" else "⚪ Jarvis mode OFF — on karne ke liye 'jarvis on' ya chat ke upar Jarvis button dabao"); return true }
+        // ---------- v4.13: AI MODEL INFO — ChatGPT jaisi guidance + in-app download + laptop steps ----------
+        if (Regex("\\b(qwen|smol|smollm|ollama|gguf|llm|artificial)\\b").containsMatchIn(low) ||
+            (low.contains("model") && !low.contains("phone model")) || low.startsWith("ai ")) {
+            val mLaptop = Regex("\\b(laptop|pc|computer|windows|linux|mac|desktop)\\b").containsMatchIn(low)
+            val mDl = Regex("(download|install|load karo|load kar|lana|laana)").containsMatchIn(low)
+            val mInfo = Regex("(kya hai|kya h |what is|batao|bata |info|information|ke bare|about|samjhao|kaise|how|use karte|chalta hai|chalta|working|cheez|details|misal|example)").containsMatchIn(low)
+            val mIsCmd = low.startsWith("transformer") || low.startsWith("model") || low.startsWith("gguf") ||
+                low.startsWith("qwen se") || low.startsWith("api se") || low.startsWith("auto mode") ||
+                low.startsWith("voice") || low.startsWith("mic") || low.startsWith("jarvis")
+            when {
+                mIsCmd -> { /* ye normal commands hain — aage apne handlers khud sambhalenge */ }
+                mLaptop -> { chatReplyStream(MODEL_INFO_LAPTOP); return true }
+                mDl && !mInfo -> {
+                    if (Regex("\\b(voice|mic|awaz|awaaz)\\b").containsMatchIn(low)) {
+                        chatReply("\u26A1 Theek hai — offline voice model download chalata hoon...")
+                        runCommand("voice download urdu-hindi", msg); return true
+                    }
+                    val which = when {
+                        Regex("\\b(smol|smollm)\\b").containsMatchIn(low) -> 1
+                        Regex("\\bqwen\\b").containsMatchIn(low) -> 2
+                        else -> 0
+                    }
+                    if (which > 0) {
+                        chatReply("\u2B07\uFE0F Theek hai — Auto Bot mein model download chalata hoon (background mein, waqt lagega)...")
+                        Thread { runCommand("transformer download $which", "download model $which") }.start()
+                        return true
+                    }
+                }
+                mInfo -> { chatReplyStream(MODEL_INFO_ABOUT); return true }
+            }
+        }
+
 
         if (low.startsWith("ask ")) {
             val q = msg.substring(4).trim()
