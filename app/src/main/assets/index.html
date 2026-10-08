@@ -202,6 +202,13 @@
     #empty h1 { font-size: 20px; }
     #sideclose { display: block; }
   }
+
+/* v4.11: Jarvis button + page close X */
+.jarvis-btn.on { background:#22c55e !important; color:#fff !important; border-radius:999px; padding:4px 10px; box-shadow:0 0 10px rgba(34,197,94,.55); animation:jarvisPulse 2.2s infinite; }
+@keyframes jarvisPulse { 0%,100% { box-shadow:0 0 6px rgba(34,197,94,.35);} 50% { box-shadow:0 0 14px rgba(34,197,94,.75);} }
+.panel { position:relative; }
+.page-x { position:absolute; top:10px; right:12px; z-index:9; width:34px; height:34px; border-radius:50%; border:1px solid var(--border); background:var(--panel); color:var(--text); font-size:17px; line-height:1; cursor:pointer; }
+.page-x:hover { background:var(--hov); border-color:var(--hov-br); }
 </style>
 </head>
 <body class="light">
@@ -237,7 +244,8 @@
   <div id="topbar">
     <button class="hamb" onclick="toggleSidebar()">&#9776;</button>
     <div class="brand"><span class="logo-slot" style="width:26px;height:26px;display:inline-flex"></span> Auto Bot</div>
-    <button class="hamb" style="margin-left:auto" onclick="newChat()" title="New chat">&#10010;</button>
+    <button class="hamb jarvis-btn" id="jarvis-btn" onclick="toggleJarvis()" title="Jarvis mode ON/OFF (bol ke control)" style="margin-left:auto;font-size:14px">🤖 Jarvis</button>
+    <button class="hamb" onclick="newChat()" title="New chat">&#10010;</button>
   </div>
 
   <div id="view">
@@ -469,6 +477,28 @@ function openAccSettings() {
 }
 
 function newChat() { curChat = null; chatHist = []; saveChat(); $('msgs').innerHTML = ''; $('empty').style.display = 'flex'; showView('chat'); if (isMobile() && $('sidebar').classList.contains('open')) toggleSidebar(); }
+// ---------- v4.11: JARVIS BUTTON + PAGE CLOSE X ----------
+function toggleJarvis() {
+  if (!window.AutoBotNative) { toast('Jarvis sirf app mein chalta hai'); return; }
+  if (!AutoBotNative.jarvisToggle) { toast('Purana app — update karo'); return; }
+  AutoBotNative.jarvisToggle();
+}
+window.jarvisSet = function(on) {
+  var b = document.getElementById('jarvis-btn');
+  if (!b) return;
+  b.classList.toggle('on', !!on);
+  b.innerHTML = on ? '🟢 ON' : '🤖 Jarvis';
+};
+(function () { // har page (chat ke ilawa) pe close X — chat wapas khulta hai
+  document.querySelectorAll('.panel').forEach(function (p) {
+    if (!p.id || p.id === 'p-chat' || p.querySelector('.page-x')) return;
+    var x = document.createElement('button');
+    x.className = 'page-x'; x.innerHTML = '✕'; x.title = 'Page band karo';
+    x.onclick = function () { showView('chat'); };
+    p.style.position = 'relative';
+    p.insertBefore(x, p.firstChild);
+  });
+})();
 
 /* ---------- chat ---------- */
 function bubble(role, text) {

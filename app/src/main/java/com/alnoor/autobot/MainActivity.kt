@@ -548,6 +548,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun chatReply(text: String) {
+        // v4.11: Jarvis mode ON ho to jawab bol ke bhi sunao
+        if (jarvisOn) try { TtsBox.speak(this, text.replace(Regex("[*_#`>]"), " ").replace(Regex("(?im)^TASK:.*$"), " ").take(600)) } catch (_: Exception) {}
         // JS bridge WebView thread par hota hai; evaluateJavascript UI thread par zaroori hai.
         runOnUiThread {
             try { webView.evaluateJavascript("window.__localBotReply(" + JSONObject.quote(text) + ")", null) }
@@ -1756,6 +1758,11 @@ class MainActivity : AppCompatActivity() {
         }
         if (low == "mic on" || low == "voice on" || low == "suno" || low == "sunno" || low == "sun" || low == "mic start" || low == "voice start") { runOnUiThread { startVoiceCommand() }; return true }
         if (low == "mic off" || low == "voice off" || low == "mic stop" || low == "voice stop" || low == "bas" || low == "chup") { runOnUiThread { voiceStopAll() }; chatReply("🎤 Voice band."); return true }
+        // ---------- v4.11: JARVIS MODE commands ----------
+        if (low == "jarvis on" || low == "jarvis mode on" || low == "jarvis start" || low == "jarvis kholo") { runOnUiThread { jarvisStart() }; return true }
+        if (low == "jarvis off" || low == "jarvis mode off" || low == "jarvis band" || low == "jarvis stop" || low == "jarvis band karo") { runOnUiThread { jarvisStop() }; return true }
+        if (low == "jarvis" || low == "jarvis status") { chatReply(if (jarvisOn) "🟢 Jarvis mode ON — main sun raha hoon. Band: 'jarvis off'" else "⚪ Jarvis mode OFF — on karne ke liye 'jarvis on' ya chat ke upar Jarvis button dabao"); return true }
+
         if (low.startsWith("ask ")) {
             val q = msg.substring(4).trim()
             if (q.isBlank()) { chatReply("Sawal likho: ask <sawal>  (ya seedha sawal likho — 'ask' ki zarurat nahi)"); return true }
@@ -3899,6 +3906,10 @@ ipa download
             return true
         }
 
+        // v4.11: JARVIS BUTTON — chat topbar ke + button ke sath (green = ON)
+        @JavascriptInterface
+        fun jarvisToggle() { runOnUiThread { if (jarvisOn) jarvisStop() else jarvisStart() } }
+
         @JavascriptInterface
         fun appStatus(): String = "AutoBot " + PyEngine.brand + " (v" + BuildConfig.VERSION_NAME + ") — online: ${isOnline()}"
 
@@ -4277,6 +4288,102 @@ ipa download
         stopSystemSpeech()
         voiceMicOff()
     }
+    // ---------- v4.11: JARVIS MODE — continuous suno -> process -> bolo ----------
+    @Volatile private var jarvisOn = false
+    private var jarvisErrs = 0
+
+    private fun jarvisSetUi(on: Boolean) {
+        try { webView.evaluateJavascript("(function(){if(window.jarvisSet)window.jarvisSet(" + on + ");})()", null) } catch (_: Exception) {}
+    }
+
+    private fun jarvisStart() {
+        if (jarvisOn) { chatReply("🟢 Jarvis pehle se ON hai."); return }
+        if (!micPermitted()) { ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC); return }
+        jarvisOn = true; jarvisErrs = 0
+        jarvisSetUi(true)
+        chatReply("🟢 *Jarvis mode ON* — main sunta rahunga, aap bolo.\nSab kuch chalega: open app, call, alarm, sawal — kuch bhi.\nBand: dobara Jarvis button ya bolo \"jarvis off\"")
+        try { TtsBox.speak(this, "Jarvis mode on. Bolo, main sun raha hoon.") } catch (_: Exception) {}
+        jarvisListen()
+    }
+
+    private fun jarvisStop() {
+        jarvisOn = false
+        voiceStopAll()
+        jarvisSetUi(false)
+        chatReply("🔴 *Jarvis mode OFF* — chat mode wapas.")
+    }
+
+    private fun jarvisListen() {
+        if (!jarvisOn) return
+        if (SpeechEngine.ready(this)) {
+            // Vosk offline — continuous
+            SpeechEngine.start(this,
+                onPartial = { p -> runOnUiThread { setInputText(p) } },
+                onFinal = { f -> runOnUiThread { jarvisHandle(f) } },
+                onFail = { e ->
+                    jarvisErrs++
+                    runOnUiThread {
+                        voiceMicOff()
+                        if (jarvisOn && jarvisErrs < 4) android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ jarvisListen() }, 800)
+                        else if (jarvisOn) { chatReply("🎤 Jarvis voice error: $e — band kar raha hoon."); jarvisStop() }
+                    }
+                })
+            voiceMicOn()
+        } else {
+            // Google speech — one-shot, result pe loop
+            try {
+                if (!android.speech.SpeechRecognizer.isRecognitionAvailable(this)) {
+                    chatReply("❌ Speech service nahi mili (offline ke liye: voice download urdu-hindi). Jarvis band.")
+                    jarvisStop(); return
+                }
+                stopSystemSpeech()
+                val sr = android.speech.SpeechRecognizer.createSpeechRecognizer(this)
+                sysRecognizer = sr
+                sr.setRecognitionListener(object : android.speech.RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) { voiceMicOn() }
+                    override fun onBeginningOfSpeech() {}
+                    override fun onRmsChanged(rmsdB: Float) {}
+                    override fun onBufferReceived(buffer: ByteArray?) {}
+                    override fun onEndOfSpeech() {}
+                    override fun onError(error: Int) {
+                        voiceMicOff()
+                        if (!jarvisOn) return
+                        // chup-chaap retry — user ko har baar error nahi dikhana
+                        if (error == android.speech.SpeechRecognizer.ERROR_NO_MATCH || error == android.speech.SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                            jarvisErrs = 0; android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ jarvisListen() }, 400)
+                        } else if (jarvisErrs++ < 5) {
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ jarvisListen() }, 800)
+                        } else { chatReply("🎤 Jarvis mic error code $error — band."); jarvisStop() }
+                    }
+                    override fun onResults(results: Bundle?) {
+                        voiceMicOff(); jarvisErrs = 0
+                        val t = results?.getStringArrayList(android.speech.SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim().orEmpty()
+                        if (t.isNotEmpty()) jarvisHandle(t) else if (jarvisOn) jarvisListen()
+                    }
+                    override fun onPartialResults(partialResults: Bundle?) {}
+                    override fun onEvent(eventType: Int, params: Bundle?) {}
+                })
+                val i = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, SYS_VOICE_LANG)
+                    putExtra(android.speech.RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+                }
+                sr.startListening(i)
+                voiceMicOn()
+            } catch (e: Exception) { voiceMicOff(); chatReply("🎤 Jarvis error: ${e.message}"); jarvisStop() }
+        }
+    }
+
+    private fun jarvisHandle(text: String) {
+        val t = text.trim()
+        val low = t.lowercase()
+        if (low in listOf("jarvis off", "jarvis band", "jarvis band karo", "jarvis stop", "chup", "bas", "band karo", "ruk jao", "jarvis close")) {
+            jarvisStop(); return
+        }
+        if (t.isNotEmpty()) sendAsTyped(t) // poori pipeline: command / AI / TASK intent
+        if (jarvisOn) android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ jarvisListen() }, 600)
+    }
+
 
     private fun startSystemSpeech() {
         try {
