@@ -419,6 +419,74 @@ class MainActivity : AppCompatActivity() {
     }
 
     // shell engine: real Android sh, background mein bot bhi use karta hai
+    /** v4.15: Play Store se app dhoondo + Install + permission accept + done report (accessibility) */
+    private fun playStoreInstall(query: String) {
+        chatReply("\U0001F6CD\uFE0F Play Store khol raha hoon — \"$query\" dhoondta hoon...")
+        Thread {
+            var done = ""
+            try {
+                val pm = packageManager
+                val lowq = query.lowercase().replace(" ", "")
+                if (lowq.length > 2) {
+                    val packs = try { pm.getInstalledPackages(0) } catch (_: Exception) { emptyList() }
+                    for (p in packs) {
+                        val lbl = try { pm.getApplicationLabel(p.applicationInfo).toString().lowercase().replace(" ", "") } catch (_: Exception) { "" }
+                        if (lbl.length > 2 && (lbl.contains(lowq) || lowq.contains(lbl))) { done = "already"; break }
+                    }
+                }
+                if (done == "already") {
+                    runOnUiThread { chatReply("\u2705 \"$query\" pehle se installed hai — kholne ke liye likho: open $query") }
+                    return@Thread
+                }
+                try { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("market://search?q=" + java.net.URLEncoder.encode(query, "UTF-8"))).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                catch (_: Exception) { runOnUiThread { openUrl("https://play.google.com/store/search?q=" + java.net.URLEncoder.encode(query, "UTF-8")) } }
+                Thread.sleep(4000)
+                var stage = 0
+                for (i in 1..45) {
+                    Thread.sleep(2000)
+                    val fg = try { AutoBotAccessibilityService.foregroundPackage() } catch (_: Exception) { "" }
+                    if (fg.startsWith("com.alnoor.autobot") && stage > 0) { done = "user-back"; break }
+                    val scr = try { AutoBotAccessibilityService.readScreen() } catch (_: Exception) { "" }
+                    if (scr.isBlank()) continue
+                    if (scr.contains("Uninstall") || scr.contains("Open")) { done = "ok"; break }
+                    when (stage) {
+                        0 -> {
+                            val hit = AutoBotAccessibilityService.tapText(query) == "OK" ||
+                                (query.contains(' ') && AutoBotAccessibilityService.tapText(query.split(' ').first()) == "OK")
+                            if (hit) stage = 1 else {
+                                AutoBotAccessibilityService.scroll(true)
+                                if (i >= 40) done = "notfound"
+                            }
+                        }
+                        1 -> {
+                            if (scr.contains("Install") && AutoBotAccessibilityService.tapText("Install") == "OK") {
+                                stage = 2
+                                runOnUiThread { chatReply("\u2B07\uFE0F Install dabaya — download shuru...") }
+                            } else if (i > 22) done = "notfound"
+                        }
+                        2 -> {
+                            for (w in listOf("Next", "Accept", "Agree", "Confirm", "OK")) {
+                                if (AutoBotAccessibilityService.tapText(w) == "OK") break
+                            }
+                            if (i > 42) done = "timeout"
+                        }
+                    }
+                    if (done.isNotBlank()) break
+                }
+            } catch (e: Exception) { done = "error:" + e.message }
+            val msg = when {
+                done == "ok" -> "\U0001F389 Ho gaya! \"$query\" install ho gaya.\nKholne ke liye: open $query"
+                done == "already" -> ""
+                done == "user-back" -> "\u23F9\uFE0F Install rok diya — tum Auto Bot par wapas aa gaye the."
+                done == "notfound" -> "\u274C \"$query\" Play Store par nahi mila (ya Install button nahi mila)."
+                done == "timeout" -> "\u26A0\uFE0F Install poora confirm nahi ho saka — Play Store app mein status dekho."
+                done.startsWith("error") -> "\u274C Install flow masla: " + done.removePrefix("error:")
+                else -> "\u26A0\uFE0F Install complete nahi hua — Play Store mein check karo."
+            }
+            if (msg.isNotBlank()) runOnUiThread { chatReply(msg) }
+        }.start()
+    }
+
     /** v4.14: shell env — HOME/TMPDIR/PATH har command ke saath export (var expansion + builtins fix) */
     private fun shellEnvExports(): String {
         val home = homeDir().absolutePath
@@ -1889,6 +1957,34 @@ Auto Bot mein hi chahiye? Likho: download qwen \uD83D\uDC40"""
         if (low == "jarvis on" || low == "jarvis mode on" || low == "jarvis start" || low == "jarvis kholo") { runOnUiThread { jarvisStart() }; return true }
         if (low == "jarvis off" || low == "jarvis mode off" || low == "jarvis band" || low == "jarvis stop" || low == "jarvis band karo") { runOnUiThread { jarvisStop() }; return true }
         if (low == "jarvis" || low == "jarvis status") { chatReply(if (jarvisOn) "🟢 Jarvis mode ON — main sun raha hoon. Band: 'jarvis off'" else "⚪ Jarvis mode OFF — on karne ke liye 'jarvis on' ya chat ke upar Jarvis button dabao"); return true }
+        // ---------- v4.15: PLAY STORE — auto search + install (accessibility power) ----------
+        val psQuery = Regex("^install\\s+(.+?)(?:\\s+karo|\\s+kro|\\s+kar)?\\s*$").find(low)?.groupValues?.get(1)
+            ?: Regex("^(.+?)\\s+(?:install karo|install kro|install kar)$").find(low)?.groupValues?.get(1)
+            ?: Regex("^play store se\\s+(.+?)\\s+(?:download|install|lana|laana)(?:\\s+karo|\\s+kro)?\\s*$").find(low)?.groupValues?.get(1)
+            ?: Regex("^download app\\s+(.+?)\\s*(?:karo|kro)?\\s*$").find(low)?.groupValues?.get(1)
+            ?: Regex("^(.+?)\\s+app download karo\\s*$").find(low)?.groupValues?.get(1)
+            ?: Regex("^(.+?)\\s+download karo\\s*$").find(low)?.groupValues?.get(1)
+        val psIsModel = psQuery != null && Regex("qwen|smol|ollama|gguf|model|llm|voice").containsMatchIn(psQuery!!)
+        val psIsCmd = low.startsWith("transformer") || low.startsWith("gguf") || low.startsWith("voice") || low.startsWith("pip") || low.startsWith("dep") || low.startsWith("model")
+        if (psQuery != null && !psIsModel && !psIsCmd && psQuery != "app") {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            playStoreInstall(psQuery.trim())
+            return true
+        }
+        if (low == "play store" || low == "play store kholo" || low.contains("play store open") || low.contains("play store khol")) {
+            try { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("market://")).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            catch (_: Exception) { openUrl("https://play.google.com") }
+            chatReply("🛍️ Play Store khul gaya.")
+            return true
+        }
+        val psSearch = Regex("^play store (?:search|mein)\\s+(.+?)(?:\\s+karo|\\s+kro)?\\s*$").find(low)?.groupValues?.get(1)
+        if (psSearch != null) {
+            try { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("market://search?q=" + java.net.URLEncoder.encode(psSearch, "UTF-8"))).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            catch (_: Exception) { openUrl("https://play.google.com/store/search?q=" + java.net.URLEncoder.encode(psSearch, "UTF-8")) }
+            chatReply("🔍 Play Store search: \"$psSearch\"\n(Install karwana ho to likho: install $psSearch)")
+            return true
+        }
+
         // ---------- v4.13: AI MODEL INFO — ChatGPT jaisi guidance + in-app download + laptop steps ----------
         if (Regex("\\b(qwen|smol|smollm|ollama|gguf|llm|artificial)\\b").containsMatchIn(low) ||
             (low.contains("model") && !low.contains("phone model")) || low.startsWith("ai ")) {
@@ -2310,6 +2406,69 @@ Auto Bot mein hi chahiye? Likho: download qwen \uD83D\uDC40"""
             chatReply(if (AutoBotAccessibilityService.goHome() == "OK") "🏠 Home." else "❌ Home fail.")
             return true
         }
+        // ---------- v4.15: FULL-POWER accessibility — recents/close/notifications/longpress/powers ----------
+        if (low == "recents" || low.contains("recent apps") || low.contains("recents kholo") || low.contains("recent kholo")) {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            chatReply(if (AutoBotAccessibilityService.recents() == "OK") "📋 Recents khul gaye." else "❌ Recents fail.")
+            return true
+        }
+        if (low == "notifications" || low.contains("notification kholo") || low.contains("notifications kholo") || low.contains("notification panel")) {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            chatReply(if (AutoBotAccessibilityService.notifications() == "OK") "🔔 Notification panel khula." else "❌ Fail.")
+            return true
+        }
+        if (low == "close app" || low == "app close" || low.contains("app band karo") || low.contains("ye app band karo") || low.contains("app close karo") || low.contains("band karo app")) {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            Thread {
+                try {
+                    val fg = AutoBotAccessibilityService.foregroundPackage()
+                    if (fg.isNotBlank() && !fg.startsWith("com.alnoor.autobot")) {
+                        AutoBotAccessibilityService.recents(); Thread.sleep(800)
+                        AutoBotAccessibilityService.scroll(true); Thread.sleep(600)
+                        AutoBotAccessibilityService.goHome()
+                        runOnUiThread { chatReply("❌ App band kar diya: $fg") }
+                    } else runOnUiThread { chatReply("ℹ️ Auto Bot ke bahar koi app khuli nahi lag rahi.") }
+                } catch (e: Exception) { runOnUiThread { chatReply("❌ Close fail: ${e.message}") } }
+            }.start()
+            return true
+        }
+        val lpTarget = Regex("^long press\\s+(.+)$").find(low)?.groupValues?.get(1)
+            ?: Regex("^(.+?)\\s+long press karo$").find(low)?.groupValues?.get(1)
+        if (lpTarget != null) {
+            if (!AutoBotAccessibilityService.isOn()) { chatReply(accSteps); return true }
+            val res = AutoBotAccessibilityService.longPressText(lpTarget)
+            chatReply(if (res == "OK") "👆 Long press: $lpTarget" else "❌ Long press fail: $res")
+            return true
+        }
+        if (low == "powers" || low == "power list" || low.contains("full power") || low == "kya kar sakte ho" || low == "kya kar sakte ho?") {
+            chatReply("⚡ AUTO BOT — FULL POWERS (Accessibility ON ho to sab chalta hai):
+
+" +
+                "📱 SCREEN: screen parho | tap <text> | long press <text> | tap x y | type <text> | scroll up/down | swipe left/right | back jao | home jao | recents | notifications
+
+" +
+                "🛍️ PLAY STORE: install <app> | <app> download karo | app band karo | play store kholo | play store search <app>
+
+" +
+                "📲 APPS: open <app> | app lock <app> pin <1234> | unlock karo
+
+" +
+                "📞 CALLS: call <naam/number> | again | call <naam> sim 1/2 | call <naam> 5 baje
+
+" +
+                "🎤 VOICE: mic on (offline sunta hai) | jarvis on — bolo aur karwao, TTS se jawab
+
+" +
+                "🧠 AI: koi bhi sawal likho | likho story/poem/essay <topic> | download qwen
+
+" +
+                "💻 TERMINAL/FILES: sh <command> | py <code> | cloud run <command>
+
+" +
+                "Accessibility ON karne ke liye: menu → ⚩ Accessibility → On. Phir ye list wapas maango: 'powers'")
+            return true
+        }
+
 
 
         // ---------- v3.9.3: contacts + clients + daily WA + research ----------
