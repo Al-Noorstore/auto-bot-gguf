@@ -105,18 +105,29 @@ object SimDialer {
                 }
                 "✅ Call lag rahi hai ($simTxt): $num"
             } else {
+                try { ctx.getSharedPreferences("autobot", Context.MODE_PRIVATE).edit().putLong("auto_dial_at", System.currentTimeMillis()).putString("auto_dial_num", num).apply() } catch (_: Exception) {}
                 val dial = Intent(Intent.ACTION_DIAL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 ctx.startActivity(dial)
-                "📞 Dialer khula (CALL permission nahi) — $num"
+                "📞 Dialer khula — call button khud dabayenge ($num)"
             }
         } catch (e: Exception) {
             try {
+                try { ctx.getSharedPreferences("autobot", Context.MODE_PRIVATE).edit().putLong("auto_dial_at", System.currentTimeMillis()).putString("auto_dial_num", num).apply() } catch (_: Exception) {}
                 ctx.startActivity(Intent(Intent.ACTION_DIAL, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                "📞 Dialer: $num (${e.message})"
+                "📞 Dialer: $num — call button khud dabayenge (${e.message})"
             } catch (e2: Exception) {
                 "❌ Call fail: ${e2.message}"
             }
         }
+    }
+
+    /** v4.8: AUTO SLOT — bina poochhe best SIM: contact ki aadat -> default setting -> zyada use wali SIM */
+    fun autoSlot(ctx: Context, phone: String): Int {
+        try { contactSim(ctx, phone)?.let { if (it in 0..1) return it } } catch (_: Exception) {}
+        val d = defaultSlot(ctx)
+        if (d in 0..1) return d
+        val (u0, u1) = try { usage(ctx) } catch (_: Exception) { Pair(0, 0) }
+        return if (u1 > u0) 1 else 0
     }
 
     private fun tryAttachPhoneAccount(ctx: Context, intent: Intent, slot: Int) {

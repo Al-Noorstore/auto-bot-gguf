@@ -102,6 +102,15 @@ object AlarmEngine {
         if (a.daily && a.enabled) reschedule(ctx, a)
     }
 
+
+    /** v4.8: SCHEDULED CALL — waqt pe khud call lagegi (receiver AUTOCALL label se dial karta hai). */
+    fun scheduleCall(ctx: Context, phone: String, name: String, hour: Int, minute: Int): AbAlarm =
+        schedule(ctx, hour, minute, false, "AUTOCALL:" + phone.filter { it.isDigit() || it == '+' } + "|" + name.take(40))
+
+    /** v4.8: SCHEDULED CALL — N minute/ghante baad (timer style). */
+    fun scheduleCallIn(ctx: Context, phone: String, name: String, seconds: Long): AbAlarm =
+        scheduleTimer(ctx, seconds, "AUTOCALL:" + phone.filter { it.isDigit() || it == '+' } + "|" + name.take(40))
+
     /** Timer (duration seconds) — one-shot, id negative (conflict na ho). */
     fun scheduleTimer(ctx: Context, seconds: Long, label: String): AbAlarm {
         val seq = prefs(ctx).getInt("brain_alarm_seq", 1)

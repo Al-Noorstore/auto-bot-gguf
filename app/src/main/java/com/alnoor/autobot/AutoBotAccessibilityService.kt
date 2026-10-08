@@ -23,6 +23,22 @@ class AutoBotAccessibilityService : AccessibilityService() {
         try {
             if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
                 val pkg = event.packageName?.toString() ?: return
+                // ---------- v4.8: AUTO-DIAL — dialer khula to call button khud dabao ----------
+                try {
+                    val dialers = hashSetOf("com.android.dialer", "com.google.android.dialer", "com.samsung.android.dialer",
+                        "com.samsung.android.app.dialertab", "com.android.contacts", "com.android.incallui", "com.miui.dialer")
+                    if (pkg in dialers) {
+                        val sp = getSharedPreferences("autobot", MODE_PRIVATE)
+                        val at = sp.getLong("auto_dial_at", 0)
+                        if (at > 0 && System.currentTimeMillis() - at < 45000 && at != lastAutoDial) {
+                            lastAutoDial = at
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                try { autoDialTap(sp) } catch (_: Exception) {}
+                            }, 1200)
+                        }
+                    }
+                } catch (_: Exception) {}
+
                 val entry = AppLockVault.get(this, pkg) ?: AppLockVault.get(this, "app lock")
                 if (entry != null && entry.enabled && !pkg.startsWith("com.alnoor.autobot")) {
                     val now = System.currentTimeMillis()
@@ -38,6 +54,46 @@ class AutoBotAccessibilityService : AccessibilityService() {
     }
 
     private var lastAutoApply = 0L
+    private var lastAutoDial = 0L
+
+
+    /** v4.8: dialer ka call button khud dabana (jab auto_dial_at pref set ho — 45 sec ke andar) */
+    private fun autoDialTap(sp: android.content.SharedPreferences) {
+        for (q in listOf("call button", "call", "\u0915\u0949\u0932")) {
+            try { if (tapText(q) == "OK") { sp.edit().putLong("auto_dial_at", 0).apply(); return } } catch (_: Exception) {}
+        }
+        val root = try { rootInActiveWindow } catch (_: Exception) { null } ?: return
+        val ids = listOf("com.android.dialer:id/dialpad_floating_action_button",
+            "com.google.android.dialer:id/dialpad_floating_action_button",
+            "com.samsung.android.dialer:id/floating_action_button", "com.android.dialer:id/call_button",
+            "com.android.contacts:id/call_button")
+        for (rid in ids) {
+            val node = try { findResNode(root, rid) } catch (_: Exception) { null } ?: continue
+            var n = node; var hops = 0
+            while (!n.isClickable && n.parent != null && hops < 8) { n = n.parent ?: break; hops++ }
+            try {
+                if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    sp.edit().putLong("auto_dial_at", 0).apply(); return
+                } else {
+                    val r = Rect(); node.getBoundsInScreen(r)
+                    if (r.width() > 0 && r.height() > 0) {
+                        tapXY(r.centerX().toFloat(), r.centerY().toFloat())
+                        sp.edit().putLong("auto_dial_at", 0).apply(); return
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun findResNode(n: AccessibilityNodeInfo, resId: String, depth: Int = 0): AccessibilityNodeInfo? {
+        if (depth > 25) return null
+        if (n.viewIdResourceName == resId) return n
+        for (i in 0 until n.childCount) {
+            val c = try { n.getChild(i) } catch (_: Exception) { null } ?: continue
+            findResNode(c, resId, depth + 1)?.let { return it }
+        }
+        return null
+    }
 
     // lock screen detect karke real credential apply karo
     private fun autoApplyLock(pkg: String) {

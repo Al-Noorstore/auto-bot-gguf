@@ -926,6 +926,37 @@ class MainActivity : AppCompatActivity() {
 
 
     /** Phonebook + MemoryVault clients + OfflineBrain contacts */
+    /** v4.8: SCHEDULED CALL time parse — "5 baje" / "sham 6:30 baje" / "30 minute baad" / "2 ghante baad" */
+    private class CallTime(val hour: Int = 0, val minute: Int = 0, val secs: Long = 0, val pretty: String, val matched: String)
+
+    private fun parseCallTime(low: String): CallTime? {
+        var m = Regex("(\d{1,2})\s*(?:hour|ghantay|ghante|ghanta|saat|saath)\s*(\d{1,3})\s*(?:minute|min|mints|mint)\s*(?:baad|bad|later|ke baad|after)").find(low)
+        if (m != null) { val h = m.groupValues[1].toLongOrNull() ?: 0L; val mm = m.groupValues[2].toLongOrNull() ?: 0L
+            return CallTime(secs = h * 3600 + mm * 60, pretty = "${h} ghante ${mm} minute baad", matched = m.value) }
+        m = Regex("(\d{1,3})\s*(?:minute|min|mints|mint|minat)\s*(?:baad|bad|later|ke baad|after)").find(low)
+        if (m != null) { val n = m.groupValues[1].toLongOrNull() ?: 0L
+            if (n in 1..720) return CallTime(secs = n * 60, pretty = "$n minute baad", matched = m.value) }
+        m = Regex("(\d{1,2})\s*(?:hour|ghantay|ghante|ghanta|saat|saath)\s*(?:baad|bad|later|ke baad|after)").find(low)
+        if (m != null) { val n = m.groupValues[1].toLongOrNull() ?: 0L
+            if (n in 1..48) return CallTime(secs = n * 3600, pretty = "$n ghante baad", matched = m.value) }
+        m = Regex("(subah|suba|shaam|sham|raat|rat|morning|evening|night|dopahar)?\s*(\d{1,2})(?:[:.](\d{2}))?\s*(?:baje|bajay|bajey|baje ka|baje ki|pm|am)").find(low)
+        if (m != null) {
+            var h = m.groupValues[2].toIntOrNull() ?: return null
+            val min = m.groupValues[3].takeIf { it.isNotBlank() }?.toIntOrNull() ?: 0
+            val marker = m.groupValues[1].lowercase()
+            val am = m.value.lowercase().endsWith("am")
+            val pm = m.value.lowercase().endsWith("pm")
+            when {
+                pm || marker in listOf("shaam", "sham", "raat", "rat", "evening", "night", "dopahar") -> if (h < 12) h += 12
+                am || marker in listOf("subah", "suba", "morning") -> if (h == 12) h = 0
+            }
+            if (h !in 0..23 || min !in 0..59) return null
+            val pretty = (marker.ifBlank { "" } + " $h:" + "%02d".format(min) + " baje").trim()
+            return CallTime(hour = h, minute = min, pretty = pretty, matched = m.value)
+        }
+        return null
+    }
+
     private fun resolveCallTargets(query: String): List<Pair<String, String>> {
         val q = query.trim()
         if (q.length < 2) return emptyList()
@@ -977,6 +1008,16 @@ class MainActivity : AppCompatActivity() {
                 else -> "(default setting)"
             }
             chatReply(SimDialer.placeCall(this, phone, slot) + "\n👤 $name • $phone\n($src)")
+            showSimSuggestion()
+            return
+        }
+        // v4.8: SIM AUTO — bina poochhe khud SIM chuno
+        val simAuto = try { getSharedPreferences("autobot", MODE_PRIVATE).getBoolean("sim_auto", false) } catch (_: Exception) { false }
+        if (simAuto) {
+            val s2 = SimDialer.autoSlot(this, phone)
+            SimDialer.noteCall(this, s2)
+            try { SimDialer.noteContactCall(this, phone, s2) } catch (_: Exception) {}
+            chatReply(SimDialer.placeCall(this, phone, s2) + "\n\U0001F464 $name \u2022 $phone\n(sim auto \u2014 khud chuna)")
             showSimSuggestion()
             return
         }
@@ -1547,6 +1588,50 @@ class MainActivity : AppCompatActivity() {
         }
         // ---------- OFFLINE BRAIN (v2.6): bina API key / bina model ke bhi ye commands chalete hain ----------
         try {
+            // ---------- v4.8: SCHEDULED CALL — name/number + time -> waqt pe khud call (dono SIM/auto) ----------
+            if (low.contains("call") && !low.contains("whatsapp") && !low.startsWith("wa ") && !low.contains("github")) {
+                val ct = parseCallTime(low)
+                if (ct != null) {
+                    var target = msg.replace(Regex(Regex.escape(ct.matched), RegexOption.IGNORE_CASE), " ")
+                        .replace(Regex("(?i)\s*ko\s*call\s*(karo|kro|do|laga[od]?)?\s*$"), "")
+                        .replace(Regex("(?i)\s*call\s*(karo|kro|do)?\s*$"), "")
+                        .replace(Regex("(?i)^call\s*(karo|kro)?\s*"), "")
+                        .replace(Regex("\s+"), " ").trim()
+                    val forcedSim = SimDialer.parseSimFromText(target)
+                    target = target.replace(Regex("(?i)\s*sim\s*[12one twoekdo]+\s*"), " ").trim()
+                    val phoneDirect = Regex("(\+?\d[\d\s-]{6,}\d)").find(target)?.value?.replace(Regex("[\s-]"), "")
+                    val hits = if (phoneDirect != null) listOf(target to phoneDirect) else resolveCallTargets(target)
+                    when {
+                        hits.isEmpty() && phoneDirect == null -> chatReply("\u274C Contact nahi mila: \u201C$target\u201D\nMisal:\namir ko call karo 6 baje\ncall 03001234567 sham 6 baje\ncall amir 30 minute baad")
+                        hits.size > 1 -> {
+                            val sb = StringBuilder("\U0001F4DE Multiple matches \u2014 kis ko?\n")
+                            hits.take(10).forEachIndexed { i, p -> sb.append("${i + 1}. ${p.first} \u2014 ${p.second}\n") }
+                            chatReply(sb.append("(time: ${ct.pretty})").toString())
+                        }
+                        else -> {
+                            val (nm, ph) = if (phoneDirect != null) (phoneDirect to phoneDirect) else hits[0]
+                            if (ct.secs > 0) AlarmEngine.scheduleCallIn(this, ph, nm, ct.secs)
+                            else AlarmEngine.scheduleCall(this, ph, nm, ct.hour, ct.minute)
+                            chatReply("\u23F0 Call schedule ho gayi!\n\U0001F464 $nm \u2014 $ph\n\U0001F550 ${ct.pretty}" +
+                                "\n\U0001F4F1 Waqt pe khud call lagegi \u2014 SIM khud chununga" + (if (forcedSim != null) " (bola: " + (if (forcedSim == 0) "SIM 1" else "SIM 2") + ")" else "") +
+                                ", koi button nahi dabana.\n(alarm list mein dikh rahi hai \u2014 alarm hatao se cancel)")
+                        }
+                    }
+                    return true
+                }
+            }
+            // ---------- v4.8: SIM AUTO — khud SIM chuno, kabhi na poochho ----------
+            if (low.startsWith("sim auto")) {
+                val rest = low.removePrefix("sim auto").trim()
+                val pref = getSharedPreferences("autobot", MODE_PRIVATE)
+                when {
+                    rest == "on" -> { pref.edit().putBoolean("sim_auto", true).apply(); chatReply("\U0001F4F1 SIM auto ON \u2014 jab tak pata na ho kis SIM se call karni, khud chun lunga (contact ki aadat \u2192 default \u2192 zyada use wali). Koi pooch-na-pooch, koi button.") }
+                    rest == "off" -> { pref.edit().putBoolean("sim_auto", false).apply(); chatReply("\U0001F4F1 SIM auto OFF \u2014 ab poochunga (ya default setting chalegi).") }
+                    else -> chatReply("\U0001F4F1 SIM auto: " + (if (pref.getBoolean("sim_auto", false)) "ON" else "OFF") + "\nsim auto on | sim auto off")
+                }
+                return true
+            }
+
             val br = OfflineBrain.parse(this, low, msg)
             if (br != null) {
                 for (a in br.actions) {
