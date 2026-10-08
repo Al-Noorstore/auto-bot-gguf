@@ -3811,6 +3811,8 @@ ipa download
     }
 
     /** v3.6: AI jawab (GGUF offline sabse pehle) — 'ask' aur direct-chat dono isi se */
+    private var aiTaskDepth = 0
+
     private fun aiAnswer(q: String) {
         showThinking()
         Thread {
@@ -3821,7 +3823,15 @@ ipa download
             } catch (_: Throwable) {}
             val ans = AIBrain.ask(this, q)
             runOnUiThread {
-                chatReply(ans)
+                // v4.10: TASK INTENT — AI ne "TASK: <command>" bola to khud chala do (ChatGPT-style + real actions)
+                val tasks = try { Regex("(?im)^\\s*TASK:\\s*(.+?)\\s*$").findAll(ans).map { it.groupValues[1].trim() }.filter { it.length in 2..120 }.take(3).toList() } catch (_: Exception) { emptyList() }
+                val shown = if (tasks.isEmpty()) ans else ans.replace(Regex("(?im)^\\s*TASK:.*$"), "").trim()
+                chatReply(shown.ifBlank { "✅ Theek hai, task chala raha hoon..." })
+                if (tasks.isNotEmpty() && aiTaskDepth < 2) {
+                    aiTaskDepth++
+                    try { for (t in tasks) { chatReply("⚙️ Task chalata hoon: $t"); runCommand(t.lowercase(), t) } } catch (_: Exception) {}
+                    aiTaskDepth--
+                }
                 // v3.0 Command Bridge: AI ke jawab mein sh code block ho to terminal pe chala do
                 try {
                     val blocks = Regex("```(?:sh|bash|shell)?[ \\t]*\\n([\\s\\S]*?)```").findAll(ans)
@@ -3881,7 +3891,12 @@ ipa download
         fun handleChatCommand(msg: String): Boolean {
             val m = msg.trim()
             val low = m.lowercase()
-            return runCommand(low, m)
+            val r = runCommand(low, m)
+            // v4.10/v3.15 PROMPT MODE: command nahi mila + AI nahi — phir bhi chhodo nahi, smart jawab do
+            if (!r) {
+                try { chatReply(SmartFallback.reply(low)) } catch (_: Exception) { chatReply("🤔 Samajh nahi aaya — 'help' likho.") }
+            }
+            return true
         }
 
         @JavascriptInterface

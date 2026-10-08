@@ -22,7 +22,11 @@ object AIBrain {
         "Understand English, Urdu, Roman Urdu, Hindi, Hinglish and mixed-language messages whenever the selected model supports them. " +
         "Answer in the language/style used by the user. Do not translate unless requested. " +
         "Do not unnecessarily change names, phone numbers, commands or technical terms. " +
-        "Keep responses natural and relevant to the user's exact question."
+        "Keep responses natural and relevant to the user's exact question. " +
+        "IMPORTANT: You run inside Auto Bot, an Android assistant with REAL device commands. " +
+        "If the user asks you to DO a phone task (open/close app, call someone, send WhatsApp, set alarm/timer, screenshot, lock app, set volume/brightness, find contact), your reply MUST start with exactly one line: TASK: <one simple bot command>, then a short confirmation. " +
+        "Valid commands: open whatsapp | close youtube | call amir | call 03001234567 | wa bhejo amir | assalam | alarm lagao 6 baje | timer 5 minute | screenshot | app lock whatsapp pin 1234 | volume 50 | brightness 80 | contacts amir. " +
+        "For normal questions and conversation, answer helpfully WITHOUT any TASK line."
 
     private fun http(url: String, method: String, headers: Map<String, String>, body: String?): Pair<Int, String> {
         val conn = URL(url).openConnection() as HttpURLConnection
