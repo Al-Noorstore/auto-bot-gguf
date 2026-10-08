@@ -2441,31 +2441,15 @@ Auto Bot mein hi chahiye? Likho: download qwen \uD83D\uDC40"""
             return true
         }
         if (low == "powers" || low == "power list" || low.contains("full power") || low == "kya kar sakte ho" || low == "kya kar sakte ho?") {
-            chatReply("⚡ AUTO BOT — FULL POWERS (Accessibility ON ho to sab chalta hai):
-
-" +
-                "📱 SCREEN: screen parho | tap <text> | long press <text> | tap x y | type <text> | scroll up/down | swipe left/right | back jao | home jao | recents | notifications
-
-" +
-                "🛍️ PLAY STORE: install <app> | <app> download karo | app band karo | play store kholo | play store search <app>
-
-" +
-                "📲 APPS: open <app> | app lock <app> pin <1234> | unlock karo
-
-" +
-                "📞 CALLS: call <naam/number> | again | call <naam> sim 1/2 | call <naam> 5 baje
-
-" +
-                "🎤 VOICE: mic on (offline sunta hai) | jarvis on — bolo aur karwao, TTS se jawab
-
-" +
-                "🧠 AI: koi bhi sawal likho | likho story/poem/essay <topic> | download qwen
-
-" +
-                "💻 TERMINAL/FILES: sh <command> | py <code> | cloud run <command>
-
-" +
-                "Accessibility ON karne ke liye: menu → ⚩ Accessibility → On. Phir ye list wapas maango: 'powers'")
+            chatReply("\u26A1 AUTO BOT \u2014 FULL POWERS (Accessibility ON ho to sab chalta hai):\n\n" +
+                "\U0001F4F1 SCREEN: screen parho | tap <text> | long press <text> | tap x y | type <text> | scroll up/down | swipe left/right | back jao | home jao | recents | notifications\n\n" +
+                "\U0001F6CD\uFE0F PLAY STORE: install <app> | <app> download karo | app band karo | play store kholo | play store search <app>\n\n" +
+                "\U0001F4F2 APPS: open <app> | app lock <app> pin <1234> | unlock karo\n\n" +
+                "\U0001F4DE CALLS: call <naam/number> | again | call <naam> sim 1/2 | call <naam> 5 baje\n\n" +
+                "\U0001F3A4 VOICE: mic on (offline sunta hai) | jarvis on \u2014 bolo aur karwao, TTS se jawab\n\n" +
+                "\U0001F9E0 AI: koi bhi sawal likho | likho story/poem/essay <topic> | download qwen\n\n" +
+                "\U0001F4BB TERMINAL/FILES: sh <command> | py <code> | cloud run <command>\n\n" +
+                "Accessibility ON karne ke liye: menu \u2192 \u26A9 Accessibility \u2192 On. Phir ye list wapas maango: 'powers'")
             return true
         }
 
