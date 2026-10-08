@@ -56,11 +56,10 @@ class AlarmReceiver : BroadcastReceiver() {
                 try { SimDialer.noteCall(ctx, slot) } catch (_: Exception) {}
                 try { SimDialer.noteContactCall(ctx, phone, slot) } catch (_: Exception) {}
                 val res = try { SimDialer.placeCall(ctx, phone, slot) } catch (e: Exception) { "\u274C " + e.message }
-                try { android.widget.Toast.makeText(ctx, "\U0001F4DE Scheduled call: $name\n$res", android.widget.Toast.LENGTH_LONG).show() } catch (_: Exception) {}
+                try { android.widget.Toast.makeText(ctx, "\uD83D\uDCDE Scheduled call: $name\n$res", android.widget.Toast.LENGTH_LONG).show() } catch (_: Exception) {}
             }
             return
         }
-
         val i = Intent(ctx, AlarmRingingActivity::class.java)
             .putExtra("id", id)
             .putExtra("label", label)
